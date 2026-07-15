@@ -1,11 +1,12 @@
 from flask import Flask, jsonify, render_template, request
 
-from geocode import GeocodeError, geocode_postcodes
+import epc
+from geocode import GeocodeError, geocode_properties
 from land_registry import LandRegistryError, parse_query, search_sales
 
 app = Flask(__name__)
 
-MAX_GEOCODE_POSTCODES = 500
+MAX_GEOCODE_PROPERTIES = 500
 
 
 @app.get("/")
@@ -31,19 +32,37 @@ def sales():
     })
 
 
+def _property_list(body):
+    properties = (body or {}).get("properties")
+    if not isinstance(properties, list) or not properties:
+        return None
+    return properties[:MAX_GEOCODE_PROPERTIES]
+
+
 @app.post("/api/geocode")
 def geocode():
-    body = request.get_json(silent=True) or {}
-    postcodes = body.get("postcodes")
-    if not isinstance(postcodes, list) or not postcodes:
-        return jsonify({"error": "postcodes (non-empty list) is required"}), 400
-    if len(postcodes) > MAX_GEOCODE_POSTCODES:
-        postcodes = postcodes[:MAX_GEOCODE_POSTCODES]
+    properties = _property_list(request.get_json(silent=True))
+    if properties is None:
+        return jsonify({"error": "properties (non-empty list) is required"}), 400
     try:
-        coords = geocode_postcodes(postcodes)
+        coords = geocode_properties(properties)
     except GeocodeError as exc:
         return jsonify({"error": str(exc)}), 502
     return jsonify({"coords": coords})
+
+
+@app.post("/api/rooms")
+def rooms():
+    if not epc.configured():
+        return jsonify({"configured": False, "rooms": {}})
+    properties = _property_list(request.get_json(silent=True))
+    if properties is None:
+        return jsonify({"error": "properties (non-empty list) is required"}), 400
+    try:
+        result = epc.rooms_for_properties(properties)
+    except epc.EpcError as exc:
+        return jsonify({"error": str(exc)}), 502
+    return jsonify({"configured": True, "rooms": result})
 
 
 if __name__ == "__main__":

@@ -69,13 +69,19 @@ def _property_type_label(uri: str | None) -> str | None:
     if not uri:
         return None
     slug = uri.rstrip("/").rsplit("/", 1)[-1]
-    return {
+    known = {
         "detached": "Detached",
         "semi-detached": "Semi-detached",
         "terraced": "Terraced",
         "flat-maisonette": "Flat/Maisonette",
         "other": "Other",
-    }.get(slug, slug.replace("-", " ").title())
+        "otherPropertyType": "Other",
+    }
+    if slug in known:
+        return known[slug]
+    # Fallback: split camelCase and hyphens into words ("someNewType" -> "Some New Type")
+    words = re.sub(r"(?<=[a-z])(?=[A-Z])", " ", slug).replace("-", " ")
+    return words.title()
 
 
 def _row_from_binding(binding: dict) -> dict:

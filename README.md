@@ -13,10 +13,19 @@ dataset starts in January 1995) up to the latest published data.
   and the house number labelled beside each point (up to 250 visible points).
 - Clickable legend: toggle property types on/off; the chart, table, and map
   all filter together.
-- Linked table below the chart — hovering a point highlights its row.
+- Linked table below the chart — hovering a point highlights its row and
+  every other recorded sale of the same property (chart and table).
+- Sales above 3x the median price are excluded from the chart (they would
+  squash the y-axis) and greyed out in the table.
 - Toggleable map (Leaflet, vendored locally; OpenStreetMap tiles) plotting
-  each property, geolocated via postcodes.io postcode lookup — postcode
-  centroids, accurate to a few doors, with co-located properties fanned out.
+  each property: house-level positions from OSM Nominatim when a search has
+  <= 25 unique properties (its usage policy allows ~1 lookup/second), with
+  postcodes.io postcode centroids (accurate to a few doors) as the fallback;
+  the note under the map states which precision each search got.
+- Optional Rooms column: no open dataset publishes bedroom counts, so the
+  nearest public source is the EPC register's habitable-rooms figure.
+  Register free at https://epc.opendatacommunities.org/ and set
+  EPC_AUTH="your-email:your-api-key" before starting the app to enable it.
 
 Data is fetched live from Land Registry's public SPARQL endpoint — nothing is
 downloaded or stored locally.
@@ -39,8 +48,9 @@ Then open http://127.0.0.1:5000.
   SPARQL-JSON results into plain rows (`date`, `price`, `address`,
   `property_type`, ...).
 - `app.py` exposes `/api/sales?q=…` (free-text search; `land_registry.py`
-  parses out postcode/street/house number) and `POST /api/geocode`
-  (postcode → lat/lng via postcodes.io, see `geocode.py`).
+  parses out postcode/street/house number), `POST /api/geocode`
+  (Nominatim house-level + postcodes.io fallback, see `geocode.py`), and
+  `POST /api/rooms` (EPC habitable rooms, see `epc.py`).
 - The frontend (`templates/index.html`, `static/js/app.js`) is plain
   HTML/CSS/JS — a hand-rolled SVG scatter chart with per-type marker shapes,
   hover tooltips, a crosshair, a legend, and a chart-linked data table, no

@@ -28,14 +28,28 @@
   const mapToggle = document.getElementById("map-toggle");
   const mapSection = document.getElementById("map-section");
   const mapNote = document.getElementById("map-note");
+  const outlierNote = document.getElementById("outlier-note");
+  const tableNote = document.getElementById("table-note");
 
   let allSales = [];
   let resultLabel = "";
   let activeTypes = new Set();
   let map = null;
   let mapMarkersLayer = null;
-  let geocodeCache = {};   // postcode -> {lat, lng}
+  let geocodeCache = {};   // property key -> {lat, lng, precision} | null
   let geocodeFailed = false;
+  let medianPrice = 0;
+  let roomsByProperty = {};
+
+  function propKey(s) {
+    return [s.saon, s.paon, s.street, s.postcode].map((v) => v || "").join("|");
+  }
+
+  function median(values) {
+    const sorted = values.slice().sort((a, b) => a - b);
+    const mid = Math.floor(sorted.length / 2);
+    return sorted.length % 2 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
+  }
 
   form.addEventListener("submit", async (evt) => {
     evt.preventDefault();
@@ -63,15 +77,22 @@
 
       sales.sort((a, b) => a.date.localeCompare(b.date));
       sales.forEach((s, i) => { s._id = i; });
+
+      medianPrice = median(sales.map((s) => s.price));
+      const outlierThreshold = medianPrice * 3;
+      sales.forEach((s) => { s._outlier = s.price > outlierThreshold; });
+
       allSales = sales;
       resultLabel = body.postcode
         + (body.street ? " · " + (body.paon ? body.paon + " " : "") + body.street : "");
       activeTypes = new Set(typesPresent(sales));
       geocodeCache = {};
       geocodeFailed = false;
+      roomsByProperty = {};
 
       resultCard.hidden = false;
       renderAll();
+      loadRooms();
       if (!mapSection.hidden) refreshMap();
     } catch (err) {
       setStatus(err.message || "Something went wrong.", true);
@@ -100,18 +121,36 @@
     return ordered;
   }
 
-  function visibleSales() {
+  // Rows shown in the table: legend-filtered, outliers included (greyed).
+  function tableSales() {
     return allSales.filter((s) => activeTypes.has(typeKey(s)));
   }
 
+  // Points plotted on the chart: legend-filtered AND outliers excluded.
+  function chartSales() {
+    return tableSales().filter((s) => !s._outlier);
+  }
+
   function renderAll() {
-    const visible = visibleSales();
+    const plotted = chartSales();
+    const shown = tableSales();
+    const outliers = shown.length - plotted.length;
+
     resultTitle.textContent =
-      resultLabel + " — " + visible.length + (visible.length === 1 ? " sale" : " sales") +
-      (visible.length !== allSales.length ? " of " + allSales.length : "");
+      resultLabel + " — " + plotted.length + (plotted.length === 1 ? " sale" : " sales") +
+      (shown.length !== allSales.length || outliers
+        ? " of " + allSales.length : "");
+
+    outlierNote.hidden = outliers === 0;
+    if (outliers > 0) {
+      outlierNote.textContent =
+        outliers + (outliers === 1 ? " sale" : " sales") + " above 3× the median price (" +
+        formatPrice(medianPrice) + " median) excluded from the chart — greyed out in the table below.";
+    }
+
     renderLegend();
-    renderTable(visible);
-    renderChart(visible);
+    renderTable(shown);
+    renderChart(plotted);
     if (!mapSection.hidden) renderMapMarkers();
   }
 
@@ -310,7 +349,7 @@
         root.appendChild(label);
       }
 
-      hitTargets.push({ cx, cy, sale, color, el: mark, id: sale._id });
+      hitTargets.push({ cx, cy, sale, color, el: mark, id: sale._id, key: propKey(sale) });
     }
 
     const crosshair = document.createElementNS(NS, "line");
@@ -329,14 +368,29 @@
     overlay.setAttribute("fill", "transparent");
     root.appendChild(overlay);
 
-    let highlighted = null;
+    // The hovered point is highlighted, and so is every other sale of the
+    // same property — in the chart and in the table.
+    let highlighted = null;      // the primary hit
+    let highlightedGroup = [];   // primary + sibling hits
 
     function clearHighlight() {
-      if (highlighted) {
-        highlighted.el.removeAttribute("transform");
-        setRowHighlight(highlighted.id, false);
-        highlighted = null;
+      for (const h of highlightedGroup) {
+        h.el.removeAttribute("transform");
+        setRowHighlight(h.id, null);
       }
+      highlighted = null;
+      highlightedGroup = [];
+    }
+
+    function applyHighlight(nearest) {
+      highlighted = nearest;
+      highlightedGroup = hitTargets.filter((h) => h.key === nearest.key);
+      for (const h of highlightedGroup) {
+        h.el.setAttribute("transform",
+          `translate(${h.cx},${h.cy}) scale(1.35) translate(${-h.cx},${-h.cy})`);
+        setRowHighlight(h.id, h === nearest ? "primary" : "related");
+      }
+      scrollRowIntoView(nearest.id);
     }
 
     overlay.addEventListener("pointermove", (evt) => {
@@ -360,13 +414,9 @@
         return;
       }
 
-      if (highlighted && highlighted !== nearest) clearHighlight();
-
       if (highlighted !== nearest) {
-        nearest.el.setAttribute("transform",
-          `translate(${nearest.cx},${nearest.cy}) scale(1.35) translate(${-nearest.cx},${-nearest.cy})`);
-        setRowHighlight(nearest.id, true);
-        highlighted = nearest;
+        clearHighlight();
+        applyHighlight(nearest);
       }
 
       crosshair.setAttribute("x1", nearest.cx);
@@ -387,18 +437,22 @@
 
   // ---- Chart ↔ table linking ----
 
-  function setRowHighlight(id, on) {
+  function setRowHighlight(id, level) {
     const row = tableBody.querySelector(`tr[data-id="${id}"]`);
     if (!row) return;
-    row.classList.toggle("is-hover", on);
-    if (on) {
-      const rowTop = row.offsetTop;
-      const rowBottom = rowTop + row.offsetHeight;
-      const viewTop = tableWrap.scrollTop;
-      const viewBottom = viewTop + tableWrap.clientHeight;
-      if (rowTop < viewTop || rowBottom > viewBottom) {
-        tableWrap.scrollTop = rowTop - tableWrap.clientHeight / 2 + row.offsetHeight / 2;
-      }
+    row.classList.toggle("is-hover", level === "primary");
+    row.classList.toggle("is-related", level === "related");
+  }
+
+  function scrollRowIntoView(id) {
+    const row = tableBody.querySelector(`tr[data-id="${id}"]`);
+    if (!row) return;
+    const rowTop = row.offsetTop;
+    const rowBottom = rowTop + row.offsetHeight;
+    const viewTop = tableWrap.scrollTop;
+    const viewBottom = viewTop + tableWrap.clientHeight;
+    if (rowTop < viewTop || rowBottom > viewBottom) {
+      tableWrap.scrollTop = rowTop - tableWrap.clientHeight / 2 + row.offsetHeight / 2;
     }
   }
 
@@ -441,6 +495,10 @@
     for (const s of sales) {
       const tr = document.createElement("tr");
       tr.dataset.id = s._id;
+      if (s._outlier) {
+        tr.classList.add("is-outlier");
+        tr.title = "Above 3× the median price — not plotted on the chart";
+      }
 
       const tdDate = document.createElement("td");
       tdDate.textContent = s.date;
@@ -455,8 +513,73 @@
       const tdType = document.createElement("td");
       tdType.textContent = s.property_type || "";
 
-      tr.append(tdDate, tdPrice, tdAddr, tdType);
+      const tdRooms = document.createElement("td");
+      tdRooms.className = "num rooms";
+      const rooms = roomsByProperty[propKey(s)];
+      tdRooms.textContent = rooms != null ? String(rooms) : "—";
+
+      tr.append(tdDate, tdPrice, tdAddr, tdType, tdRooms);
       tableBody.appendChild(tr);
+    }
+  }
+
+  // ---- Rooms column (EPC register's habitable-rooms count) ----
+
+  function uniqueProperties() {
+    const seen = new Map();
+    for (const s of allSales) {
+      const key = propKey(s);
+      if (!seen.has(key)) {
+        seen.set(key, {
+          id: key,
+          paon: s.paon,
+          saon: s.saon,
+          street: s.street,
+          town: s.town,
+          postcode: s.postcode,
+        });
+      }
+    }
+    return [...seen.values()];
+  }
+
+  async function loadRooms() {
+    try {
+      const resp = await fetch("/api/rooms", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ properties: uniqueProperties() }),
+      });
+      const body = await resp.json();
+      if (!resp.ok) throw new Error(body.error || "Rooms lookup failed");
+
+      if (!body.configured) {
+        tableNote.hidden = false;
+        tableNote.textContent =
+          "Rooms: no open dataset publishes bedroom counts; the nearest public source is the " +
+          "EPC register's habitable-rooms figure (free API key from epc.opendatacommunities.org — " +
+          "set EPC_AUTH to enable).";
+        return;
+      }
+
+      roomsByProperty = body.rooms || {};
+      const matched = Object.keys(roomsByProperty).length;
+      tableNote.hidden = false;
+      tableNote.textContent =
+        "Rooms = habitable rooms from the property's most recent EPC (bedrooms + reception rooms; " +
+        "no open dataset publishes bedroom counts alone)" +
+        (matched ? "" : " — no EPC matches found for this search") + ".";
+      // fill in the cells without a full re-render
+      for (const tr of tableBody.querySelectorAll("tr")) {
+        const sale = allSales[Number(tr.dataset.id)];
+        if (!sale) continue;
+        const rooms = roomsByProperty[propKey(sale)];
+        const cell = tr.querySelector("td.rooms");
+        if (cell && rooms != null) cell.textContent = String(rooms);
+      }
+    } catch (err) {
+      tableNote.hidden = false;
+      tableNote.textContent = "Rooms lookup unavailable: " + (err.message || "unknown error");
     }
   }
 
@@ -491,21 +614,21 @@
     // Leaflet needs a size recalc when its container was hidden at init time.
     setTimeout(() => map.invalidateSize(), 50);
 
-    const wanted = [...new Set(allSales.map((s) => s.postcode).filter(Boolean))];
-    const missing = wanted.filter((pc) => !(pc in geocodeCache));
+    const wanted = uniqueProperties();
+    const missing = wanted.filter((p) => !(p.id in geocodeCache));
     if (missing.length > 0 && !geocodeFailed) {
-      mapNote.textContent = "Locating properties…";
+      mapNote.textContent = "Locating properties… (house-level lookups take about a second each)";
       try {
         const resp = await fetch("/api/geocode", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ postcodes: missing }),
+          body: JSON.stringify({ properties: missing }),
         });
         const body = await resp.json();
         if (!resp.ok) throw new Error(body.error || "Geocoding failed");
         Object.assign(geocodeCache, body.coords || {});
-        for (const pc of missing) {
-          if (!(pc in geocodeCache)) geocodeCache[pc] = null; // known-unresolvable
+        for (const p of missing) {
+          if (!(p.id in geocodeCache)) geocodeCache[p.id] = null; // known-unresolvable
         }
       } catch (err) {
         geocodeFailed = true;
@@ -523,29 +646,37 @@
 
     // One marker per property (unique address), carrying all its sales.
     const properties = new Map();
-    for (const s of visibleSales()) {
-      const key = [s.saon, s.paon, s.street, s.postcode].filter(Boolean).join("|") || s.address;
+    for (const s of tableSales()) {
+      const key = propKey(s);
       if (!properties.has(key)) properties.set(key, []);
       properties.get(key).push(s);
     }
 
-    // Spread properties sharing a postcode centroid so markers don't stack.
+    // Address-precision markers sit at their true location; postcode-precision
+    // ones share a centroid, so fan those out to keep them clickable.
     const perPostcode = {};
     const latLngs = [];
     let unlocated = 0;
+    let addressLevel = 0;
 
-    for (const salesAtProperty of properties.values()) {
+    for (const [key, salesAtProperty] of properties.entries()) {
       const first = salesAtProperty[0];
-      const coord = first.postcode ? geocodeCache[first.postcode] : null;
+      const coord = geocodeCache[key];
       if (!coord) {
         unlocated += 1;
         continue;
       }
-      const n = (perPostcode[first.postcode] = (perPostcode[first.postcode] || 0) + 1) - 1;
-      const angle = n * 2.39996; // golden angle
-      const radius = 0.00012 * Math.sqrt(n);
-      const lat = coord.lat + radius * Math.cos(angle);
-      const lng = coord.lng + radius * Math.sin(angle) * 1.6; // lng degrees are shorter
+      let lat = coord.lat;
+      let lng = coord.lng;
+      if (coord.precision === "address") {
+        addressLevel += 1;
+      } else {
+        const n = (perPostcode[first.postcode] = (perPostcode[first.postcode] || 0) + 1) - 1;
+        const angle = n * 2.39996; // golden angle
+        const radius = 0.00012 * Math.sqrt(n);
+        lat += radius * Math.cos(angle);
+        lng += radius * Math.sin(angle) * 1.6; // lng degrees are shorter
+      }
       latLngs.push([lat, lng]);
 
       const st = styleFor(typeKey(first));
@@ -581,9 +712,13 @@
 
     if (latLngs.length > 0) {
       map.fitBounds(latLngs, { padding: [30, 30], maxZoom: 17 });
+      const postcodeLevel = latLngs.length - addressLevel;
+      const parts = [];
+      if (addressLevel) parts.push(addressLevel + " at street-address level (OpenStreetMap)");
+      if (postcodeLevel) parts.push(postcodeLevel + " by postcode centroid (accurate to a few doors)");
       mapNote.textContent =
-        latLngs.length + (latLngs.length === 1 ? " property" : " properties") +
-        " located by postcode (accurate to a few doors)" +
+        latLngs.length + (latLngs.length === 1 ? " property" : " properties") + " located: " +
+        parts.join(", ") +
         (unlocated ? "; " + unlocated + " could not be located" : "") + ".";
     } else {
       mapNote.textContent = geocodeFailed
@@ -648,7 +783,7 @@
 
   window.addEventListener("resize", debounce(() => {
     if (allSales.length && !resultCard.hidden) {
-      renderChart(visibleSales());
+      renderChart(chartSales());
     }
   }, 300));
 

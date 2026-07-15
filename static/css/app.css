@@ -20,6 +20,7 @@
 
   --critical: #d03b3b;
   --row-highlight: rgba(42, 120, 214, 0.12);
+  --row-highlight-soft: rgba(42, 120, 214, 0.06);
 }
 
 @media (prefers-color-scheme: dark) {
@@ -43,6 +44,7 @@
     --series-7: #d55181;
     --series-8: #d95926;
     --row-highlight: rgba(57, 135, 229, 0.18);
+    --row-highlight-soft: rgba(57, 135, 229, 0.09);
   }
 }
 :root[data-theme="dark"] {
@@ -65,6 +67,7 @@
   --series-7: #d55181;
   --series-8: #d95926;
   --row-highlight: rgba(57, 135, 229, 0.18);
+  --row-highlight-soft: rgba(57, 135, 229, 0.09);
 }
 
 * { box-sizing: border-box; }
@@ -275,6 +278,19 @@ th {
 td.num { font-variant-numeric: tabular-nums; }
 tbody tr.is-hover td {
   background: var(--row-highlight);
+}
+tbody tr.is-related td {
+  background: var(--row-highlight-soft);
+}
+tbody tr.is-outlier td {
+  color: var(--text-muted);
+  opacity: 0.75;
+}
+
+.footnote {
+  font-size: 12px;
+  color: var(--text-muted);
+  margin: 8px 2px 0;
 }
 
 @media (max-width: 640px) {
