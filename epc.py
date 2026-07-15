@@ -48,8 +48,15 @@ def _rows_for_postcode(postcode: str) -> list:
             timeout=REQUEST_TIMEOUT,
         )
         if resp.status_code == 401:
-            raise EpcError("The EPC API rejected the EPC_AUTH credentials")
-        resp.raise_for_status()
+            raise EpcError(
+                "The EPC API rejected the credentials (HTTP 401). Check that the "
+                "email before the colon in epc_auth.txt is exactly the address you "
+                "registered with at epc.opendatacommunities.org, and the key matches "
+                "the one on your account page."
+            )
+        if resp.status_code >= 400:
+            snippet = " ".join((resp.text or "")[:200].split())
+            raise EpcError(f"EPC register returned HTTP {resp.status_code}: {snippet}")
         rows = (resp.json() or {}).get("rows", []) if resp.text.strip() else []
     except requests.RequestException as exc:
         raise EpcError(f"Could not reach the EPC register: {exc}") from exc

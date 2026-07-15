@@ -49,6 +49,7 @@ def geocode():
     try:
         coords = geocode_properties(properties)
     except GeocodeError as exc:
+        app.logger.error("Geocoding failed: %s", exc)
         return jsonify({"error": str(exc)}), 502
     return jsonify({"coords": coords})
 
@@ -63,6 +64,7 @@ def epc_lookup():
     try:
         result = epc.epc_for_properties(properties)
     except epc.EpcError as exc:
+        app.logger.error("EPC lookup failed: %s", exc)
         return jsonify({"error": str(exc)}), 502
     return jsonify({"configured": True, "properties": result})
 
