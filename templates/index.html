@@ -4,6 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>UK House Price Explorer</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='vendor/leaflet/leaflet.css') }}">
   <link rel="stylesheet" href="{{ url_for('static', filename='css/app.css') }}">
 </head>
 <body>
@@ -14,13 +15,9 @@
     </header>
 
     <form id="search-form" class="filter-row" autocomplete="off">
-      <label class="field">
-        <span>Postcode</span>
-        <input type="text" name="postcode" placeholder="e.g. SW1A 1AA or SW1A" required>
-      </label>
       <label class="field field-grow">
-        <span>Street name <em>(optional)</em></span>
-        <input type="text" name="street" placeholder="e.g. Downing Street">
+        <span>Search</span>
+        <input type="text" name="q" placeholder="Postcode and/or street — e.g. 'SW1A 2AA', 'SW1A Downing Street'" required>
       </label>
       <button type="submit" class="submit-btn">Search</button>
     </form>
@@ -30,11 +27,16 @@
     <section id="result-card" class="card" hidden>
       <div class="card-head">
         <h2 id="result-title"></h2>
+        <button type="button" id="map-toggle" class="link-btn">Show map</button>
       </div>
       <div id="legend" class="legend" aria-hidden="true"></div>
       <div class="chart-wrap">
         <div id="chart-mount"></div>
         <div id="tooltip" class="tooltip" hidden></div>
+      </div>
+      <div id="map-section" hidden>
+        <div id="map"></div>
+        <p id="map-note" class="map-note"></p>
       </div>
       <div class="table-wrap">
         <table id="data-table">
@@ -47,6 +49,7 @@
     </section>
   </div>
 
+  <script src="{{ url_for('static', filename='vendor/leaflet/leaflet.js') }}"></script>
   <script src="{{ url_for('static', filename='js/app.js') }}"></script>
 </body>
 </html>

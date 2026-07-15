@@ -12,6 +12,10 @@
   const OTHER_STYLE = { colorVar: "--text-muted", shape: "cross" };
   const TYPE_ORDER = ["Detached", "Semi-detached", "Terraced", "Flat/Maisonette"];
 
+  // Past this many visible points, per-point house-number labels become
+  // unreadable soup — the tooltip and table still carry them.
+  const LABEL_LIMIT = 250;
+
   const form = document.getElementById("search-form");
   const statusEl = document.getElementById("status");
   const resultCard = document.getElementById("result-card");
@@ -21,27 +25,31 @@
   const tooltipEl = document.getElementById("tooltip");
   const tableBody = document.querySelector("#data-table tbody");
   const tableWrap = document.querySelector(".table-wrap");
+  const mapToggle = document.getElementById("map-toggle");
+  const mapSection = document.getElementById("map-section");
+  const mapNote = document.getElementById("map-note");
 
-  let lastSales = null;
+  let allSales = [];
+  let resultLabel = "";
+  let activeTypes = new Set();
+  let map = null;
+  let mapMarkersLayer = null;
+  let geocodeCache = {};   // postcode -> {lat, lng}
+  let geocodeFailed = false;
 
   form.addEventListener("submit", async (evt) => {
     evt.preventDefault();
-    const data = new FormData(form);
-    const postcode = (data.get("postcode") || "").trim();
-    if (!postcode) {
-      setStatus("Enter a postcode.", true);
+    const q = (new FormData(form).get("q") || "").trim();
+    if (!q) {
+      setStatus("Enter a postcode (and optionally a street name).", true);
       return;
     }
-    const street = (data.get("street") || "").trim();
-
-    const params = new URLSearchParams({ postcode });
-    if (street) params.set("street", street);
 
     setStatus("Loading from HM Land Registry…", false);
     resultCard.hidden = true;
 
     try {
-      const resp = await fetch("/api/sales?" + params.toString());
+      const resp = await fetch("/api/sales?" + new URLSearchParams({ q }).toString());
       const body = await resp.json();
       if (!resp.ok) {
         throw new Error(body.error || "Request failed");
@@ -52,8 +60,19 @@
         return;
       }
       setStatus("", false);
-      const title = postcode.toUpperCase() + (street ? " · " + street : "");
-      renderResult(sales, title);
+
+      sales.sort((a, b) => a.date.localeCompare(b.date));
+      sales.forEach((s, i) => { s._id = i; });
+      allSales = sales;
+      resultLabel = body.postcode
+        + (body.street ? " · " + (body.paon ? body.paon + " " : "") + body.street : "");
+      activeTypes = new Set(typesPresent(sales));
+      geocodeCache = {};
+      geocodeFailed = false;
+
+      resultCard.hidden = false;
+      renderAll();
+      if (!mapSection.hidden) refreshMap();
     } catch (err) {
       setStatus(err.message || "Something went wrong.", true);
     }
@@ -68,20 +87,12 @@
     return TYPE_STYLES[type] || OTHER_STYLE;
   }
 
-  function renderResult(sales, title) {
-    resultTitle.textContent = title + " — " + sales.length + (sales.length === 1 ? " sale" : " sales");
-    resultCard.hidden = false;
-
-    sales.sort((a, b) => a.date.localeCompare(b.date));
-    lastSales = sales;
-
-    renderLegend(sales);
-    renderTable(sales);
-    renderChart(sales);
+  function typeKey(sale) {
+    return sale.property_type || "Other";
   }
 
   function typesPresent(sales) {
-    const present = new Set(sales.map((s) => s.property_type || "Other"));
+    const present = new Set(sales.map(typeKey));
     const ordered = TYPE_ORDER.filter((t) => present.has(t));
     for (const t of present) {
       if (!TYPE_ORDER.includes(t)) ordered.push(t);
@@ -89,20 +100,40 @@
     return ordered;
   }
 
-  // ---- Legend (symbol + colour per property type) ----
+  function visibleSales() {
+    return allSales.filter((s) => activeTypes.has(typeKey(s)));
+  }
 
-  function renderLegend(sales) {
+  function renderAll() {
+    const visible = visibleSales();
+    resultTitle.textContent =
+      resultLabel + " — " + visible.length + (visible.length === 1 ? " sale" : " sales") +
+      (visible.length !== allSales.length ? " of " + allSales.length : "");
+    renderLegend();
+    renderTable(visible);
+    renderChart(visible);
+    if (!mapSection.hidden) renderMapMarkers();
+  }
+
+  // ---- Legend: one toggle button per property type ----
+
+  function renderLegend() {
     legendEl.innerHTML = "";
-    const types = typesPresent(sales);
-    if (types.length < 2) {
+    const types = typesPresent(allSales);
+    if (types.length === 0) {
       legendEl.setAttribute("aria-hidden", "true");
       return;
     }
     legendEl.removeAttribute("aria-hidden");
     for (const type of types) {
       const st = styleFor(type);
-      const item = document.createElement("span");
+      const item = document.createElement("button");
+      item.type = "button";
       item.className = "legend-item";
+      const on = activeTypes.has(type);
+      if (!on) item.classList.add("is-off");
+      item.setAttribute("aria-pressed", String(on));
+      item.title = (on ? "Hide " : "Show ") + type;
 
       const swatch = document.createElementNS(NS, "svg");
       swatch.setAttribute("width", 14);
@@ -114,14 +145,19 @@
       label.textContent = type;
 
       item.append(swatch, label);
+      item.addEventListener("click", () => {
+        if (activeTypes.has(type)) activeTypes.delete(type);
+        else activeTypes.add(type);
+        renderAll();
+      });
       legendEl.appendChild(item);
     }
   }
 
-  // ---- Chart: scatter plot, one marker shape per property type ----
+  // ---- Chart: scatter plot, marker shape per type, house-number labels ----
 
   const NS = "http://www.w3.org/2000/svg";
-  const MARGIN = { top: 16, right: 20, bottom: 36, left: 68 };
+  const MARGIN = { top: 16, right: 40, bottom: 36, left: 68 };
 
   function makeMarker(shape, cx, cy, r, fill, stroke) {
     let el;
@@ -167,6 +203,14 @@
 
   function renderChart(sales) {
     chartMount.innerHTML = "";
+    if (sales.length === 0) {
+      const empty = document.createElement("p");
+      empty.className = "chart-empty";
+      empty.textContent = "No property types selected — click a legend item to show one.";
+      chartMount.appendChild(empty);
+      return;
+    }
+
     const width = Math.max(chartMount.clientWidth || 800, 320);
     const height = 380;
     const innerW = width - MARGIN.left - MARGIN.right;
@@ -244,9 +288,10 @@
     }
 
     const hitTargets = [];
+    const drawLabels = sales.length <= LABEL_LIMIT;
 
-    sales.forEach((sale, index) => {
-      const st = styleFor(sale.property_type || "Other");
+    for (const sale of sales) {
+      const st = styleFor(typeKey(sale));
       const color = cssVar(st.colorVar);
       const cx = xScale(new Date(sale.date).getTime());
       const cy = yScale(sale.price);
@@ -254,8 +299,19 @@
       const mark = makeMarker(st.shape, cx, cy, 4.5, color, surfaceColor);
       root.appendChild(mark);
 
-      hitTargets.push({ cx, cy, sale, color, el: mark, index });
-    });
+      if (drawLabels && sale.paon) {
+        const label = document.createElementNS(NS, "text");
+        label.setAttribute("x", cx + 8);
+        label.setAttribute("y", cy);
+        label.setAttribute("dominant-baseline", "middle");
+        label.setAttribute("fill", mutedColor);
+        label.setAttribute("font-size", "10");
+        label.textContent = sale.paon;
+        root.appendChild(label);
+      }
+
+      hitTargets.push({ cx, cy, sale, color, el: mark, id: sale._id });
+    }
 
     const crosshair = document.createElementNS(NS, "line");
     crosshair.setAttribute("y1", 0);
@@ -278,7 +334,7 @@
     function clearHighlight() {
       if (highlighted) {
         highlighted.el.removeAttribute("transform");
-        setRowHighlight(highlighted.index, false);
+        setRowHighlight(highlighted.id, false);
         highlighted = null;
       }
     }
@@ -309,7 +365,7 @@
       if (highlighted !== nearest) {
         nearest.el.setAttribute("transform",
           `translate(${nearest.cx},${nearest.cy}) scale(1.35) translate(${-nearest.cx},${-nearest.cy})`);
-        setRowHighlight(nearest.index, true);
+        setRowHighlight(nearest.id, true);
         highlighted = nearest;
       }
 
@@ -331,8 +387,8 @@
 
   // ---- Chart ↔ table linking ----
 
-  function setRowHighlight(index, on) {
-    const row = tableBody.querySelector(`tr[data-index="${index}"]`);
+  function setRowHighlight(id, on) {
+    const row = tableBody.querySelector(`tr[data-id="${id}"]`);
     if (!row) return;
     row.classList.toggle("is-hover", on);
     if (on) {
@@ -382,9 +438,9 @@
 
   function renderTable(sales) {
     tableBody.innerHTML = "";
-    sales.forEach((s, index) => {
+    for (const s of sales) {
       const tr = document.createElement("tr");
-      tr.dataset.index = index;
+      tr.dataset.id = s._id;
 
       const tdDate = document.createElement("td");
       tdDate.textContent = s.date;
@@ -401,7 +457,139 @@
 
       tr.append(tdDate, tdPrice, tdAddr, tdType);
       tableBody.appendChild(tr);
-    });
+    }
+  }
+
+  // ---- Map: one marker per property, coloured by type ----
+
+  mapToggle.addEventListener("click", () => {
+    const showing = !mapSection.hidden;
+    if (showing) {
+      mapSection.hidden = true;
+      mapToggle.textContent = "Show map";
+    } else {
+      mapSection.hidden = false;
+      mapToggle.textContent = "Hide map";
+      refreshMap();
+    }
+  });
+
+  async function refreshMap() {
+    if (typeof L === "undefined") {
+      mapNote.textContent = "The map library failed to load.";
+      return;
+    }
+    if (!map) {
+      map = L.map("map");
+      L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
+        maxZoom: 19,
+        attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
+      }).addTo(map);
+      mapMarkersLayer = L.layerGroup().addTo(map);
+      map.setView([54.5, -2.5], 5);
+    }
+    // Leaflet needs a size recalc when its container was hidden at init time.
+    setTimeout(() => map.invalidateSize(), 50);
+
+    const wanted = [...new Set(allSales.map((s) => s.postcode).filter(Boolean))];
+    const missing = wanted.filter((pc) => !(pc in geocodeCache));
+    if (missing.length > 0 && !geocodeFailed) {
+      mapNote.textContent = "Locating properties…";
+      try {
+        const resp = await fetch("/api/geocode", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ postcodes: missing }),
+        });
+        const body = await resp.json();
+        if (!resp.ok) throw new Error(body.error || "Geocoding failed");
+        Object.assign(geocodeCache, body.coords || {});
+        for (const pc of missing) {
+          if (!(pc in geocodeCache)) geocodeCache[pc] = null; // known-unresolvable
+        }
+      } catch (err) {
+        geocodeFailed = true;
+        mapNote.textContent = "Could not locate properties: " + (err.message || "geocoding failed");
+        return;
+      }
+    }
+    renderMapMarkers();
+  }
+
+  function renderMapMarkers() {
+    if (!map || mapSection.hidden) return;
+
+    mapMarkersLayer.clearLayers();
+
+    // One marker per property (unique address), carrying all its sales.
+    const properties = new Map();
+    for (const s of visibleSales()) {
+      const key = [s.saon, s.paon, s.street, s.postcode].filter(Boolean).join("|") || s.address;
+      if (!properties.has(key)) properties.set(key, []);
+      properties.get(key).push(s);
+    }
+
+    // Spread properties sharing a postcode centroid so markers don't stack.
+    const perPostcode = {};
+    const latLngs = [];
+    let unlocated = 0;
+
+    for (const salesAtProperty of properties.values()) {
+      const first = salesAtProperty[0];
+      const coord = first.postcode ? geocodeCache[first.postcode] : null;
+      if (!coord) {
+        unlocated += 1;
+        continue;
+      }
+      const n = (perPostcode[first.postcode] = (perPostcode[first.postcode] || 0) + 1) - 1;
+      const angle = n * 2.39996; // golden angle
+      const radius = 0.00012 * Math.sqrt(n);
+      const lat = coord.lat + radius * Math.cos(angle);
+      const lng = coord.lng + radius * Math.sin(angle) * 1.6; // lng degrees are shorter
+      latLngs.push([lat, lng]);
+
+      const st = styleFor(typeKey(first));
+      const marker = L.circleMarker([lat, lng], {
+        radius: 7,
+        color: cssVar("--surface-1"),
+        weight: 2,
+        fillColor: cssVar(st.colorVar),
+        fillOpacity: 0.9,
+      });
+
+      const popup = document.createElement("div");
+      popup.className = "map-popup";
+      const addr = document.createElement("strong");
+      addr.textContent = first.address || first.postcode;
+      popup.appendChild(addr);
+      if (first.property_type) {
+        const t = document.createElement("div");
+        t.className = "map-popup-type";
+        t.textContent = first.property_type;
+        popup.appendChild(t);
+      }
+      const list = document.createElement("div");
+      for (const s of salesAtProperty.slice().reverse()) {
+        const row = document.createElement("div");
+        row.textContent = formatFullDate(s.date) + " — " + formatPrice(s.price);
+        list.appendChild(row);
+      }
+      popup.appendChild(list);
+      marker.bindPopup(popup);
+      mapMarkersLayer.addLayer(marker);
+    }
+
+    if (latLngs.length > 0) {
+      map.fitBounds(latLngs, { padding: [30, 30], maxZoom: 17 });
+      mapNote.textContent =
+        latLngs.length + (latLngs.length === 1 ? " property" : " properties") +
+        " located by postcode (accurate to a few doors)" +
+        (unlocated ? "; " + unlocated + " could not be located" : "") + ".";
+    } else {
+      mapNote.textContent = geocodeFailed
+        ? mapNote.textContent
+        : "No properties could be located for this search.";
+    }
   }
 
   // ---- formatting & scale helpers ----
@@ -459,8 +647,8 @@
   }
 
   window.addEventListener("resize", debounce(() => {
-    if (lastSales && !resultCard.hidden) {
-      renderChart(lastSales);
+    if (allSales.length && !resultCard.hidden) {
+      renderChart(visibleSales());
     }
   }, 300));
 

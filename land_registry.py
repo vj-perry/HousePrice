@@ -24,6 +24,8 @@ PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
 
 POSTCODE_RE = re.compile(r"^[A-Z]{1,2}\d[A-Z\d]?\s*\d[A-Z]{2}$", re.IGNORECASE)
 OUTCODE_RE = re.compile(r"^[A-Z]{1,2}\d[A-Z\d]?$", re.IGNORECASE)
+_FULL_PC_IN_TEXT = re.compile(r"\b([A-Z]{1,2}\d[A-Z\d]?)\s*(\d[A-Z]{2})\b", re.IGNORECASE)
+_OUTCODE_IN_TEXT = re.compile(r"\b([A-Z]{1,2}\d[A-Z\d]?)\b", re.IGNORECASE)
 
 MAX_RESULTS = 3000
 REQUEST_TIMEOUT = 30
@@ -110,10 +112,45 @@ _OPTIONAL_FIELDS = """
 """
 
 
-def search_sales(postcode: str, street: str | None = None) -> list:
+def parse_query(q: str):
+    """Split a free-text search like 'Downing Street SW1A' or 'SW1A 2AA'
+    into (postcode, street). The postcode may appear anywhere in the text;
+    whatever remains is treated as the street name."""
+    q = " ".join(q.split())
+    if not q:
+        raise LandRegistryError("Enter a search")
+
+    match = _FULL_PC_IN_TEXT.search(q)
+    if match:
+        postcode = f"{match.group(1).upper()} {match.group(2).upper()}"
+    else:
+        match = _OUTCODE_IN_TEXT.search(q)
+        if not match:
+            raise LandRegistryError(
+                "Include a postcode in your search — full like 'SW1A 2AA' "
+                "or partial like 'SW1A'"
+            )
+        postcode = match.group(1).upper()
+
+    street = (q[:match.start()] + " " + q[match.end():]).strip(" ,")
+    street = " ".join(street.split())
+
+    # A leading house number ("10 Downing Street") is a property filter,
+    # not part of the street name.
+    paon = None
+    number_match = re.match(r"^(\d+[A-Z]?)\s+(.+)$", street, re.IGNORECASE)
+    if number_match:
+        paon = number_match.group(1)
+        street = number_match.group(2)
+
+    return postcode, (street or None), paon
+
+
+def search_sales(postcode: str, street: str | None = None, paon: str | None = None) -> list:
     """All recorded sales for a postcode (full or district), optionally
-    narrowed by street name. Returns the full recorded history — the Price
-    Paid dataset starts in January 1995 — up to the latest published data.
+    narrowed by street name and house number. Returns the full recorded
+    history — the Price Paid dataset starts in January 1995 — up to the
+    latest published data.
     """
     postcode = postcode.strip().upper()
 
@@ -150,4 +187,10 @@ def search_sales(postcode: str, street: str | None = None) -> list:
     LIMIT {MAX_RESULTS}
     """
 
-    return [_row_from_binding(b) for b in _run_query(query)]
+    rows = [_row_from_binding(b) for b in _run_query(query)]
+
+    if paon:
+        needle = paon.strip().lower()
+        rows = [r for r in rows if r["paon"] and r["paon"].lower() == needle]
+
+    return rows

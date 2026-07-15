@@ -4,12 +4,19 @@ A small Flask app that plots sold-price history from HM Land Registry's
 [Price Paid Data](https://landregistry.data.gov.uk/app/doc/ppd/), with date of
 sale on the x-axis and price on the y-axis.
 
-One simple search: a postcode — full (`SW1A 1AA`) or district (`SW1A`) —
-optionally narrowed by street name. Results always cover the full recorded
-history (the dataset starts in January 1995) up to the latest published data.
-The chart is a scatter plot with a distinct marker shape and colour per
-property type (detached, semi-detached, terraced, flat/maisonette), and the
-table below is linked to the chart — hovering a point highlights its row.
+One free-text search box that accepts any mix of postcode (full `SW1A 2AA`
+or district `SW1A`), street name, and house number — e.g. `10 Downing
+Street SW1A 2AA`. Results always cover the full recorded history (the
+dataset starts in January 1995) up to the latest published data.
+
+- Scatter chart with a distinct marker shape and colour per property type,
+  and the house number labelled beside each point (up to 250 visible points).
+- Clickable legend: toggle property types on/off; the chart, table, and map
+  all filter together.
+- Linked table below the chart — hovering a point highlights its row.
+- Toggleable map (Leaflet, vendored locally; OpenStreetMap tiles) plotting
+  each property, geolocated via postcodes.io postcode lookup — postcode
+  centroids, accurate to a few doors, with co-located properties fanned out.
 
 Data is fetched live from Land Registry's public SPARQL endpoint — nothing is
 downloaded or stored locally.
@@ -31,8 +38,9 @@ Then open http://127.0.0.1:5000.
   `https://landregistry.data.gov.uk/landregistry/query` and parses the
   SPARQL-JSON results into plain rows (`date`, `price`, `address`,
   `property_type`, ...).
-- `app.py` exposes one JSON endpoint, `/api/sales?postcode=…&street=…`,
-  that the frontend calls.
+- `app.py` exposes `/api/sales?q=…` (free-text search; `land_registry.py`
+  parses out postcode/street/house number) and `POST /api/geocode`
+  (postcode → lat/lng via postcodes.io, see `geocode.py`).
 - The frontend (`templates/index.html`, `static/js/app.js`) is plain
   HTML/CSS/JS — a hand-rolled SVG scatter chart with per-type marker shapes,
   hover tooltips, a crosshair, a legend, and a chart-linked data table, no
