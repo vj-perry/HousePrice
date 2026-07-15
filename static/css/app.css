@@ -228,7 +228,41 @@ body {
   position: relative;
   overflow-x: auto;
 }
-#chart-mount svg { display: block; }
+#chart-mount svg { display: block; touch-action: none; }
+
+.chart-zoom {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  overflow: hidden;
+  background: var(--surface-1);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.08);
+}
+.chart-zoom button {
+  width: 28px;
+  height: 26px;
+  border: none;
+  background: var(--surface-1);
+  color: var(--text-secondary);
+  font-size: 15px;
+  line-height: 1;
+  cursor: pointer;
+}
+.chart-zoom button + button {
+  border-top: 1px solid var(--gridline);
+}
+.chart-zoom button:hover {
+  background: var(--row-highlight-soft);
+  color: var(--text-primary);
+}
+.chart-zoom button:focus-visible {
+  outline: 2px solid var(--series-1);
+  outline-offset: -2px;
+}
 
 .tooltip {
   position: absolute;

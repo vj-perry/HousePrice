@@ -6,11 +6,15 @@ sale on the x-axis and price on the y-axis.
 
 One free-text search box that accepts any mix of postcode (full `SW1A 2AA`
 or district `SW1A`), street name, and house number — e.g. `10 Downing
-Street SW1A 2AA`. Results always cover the full recorded history (the
-dataset starts in January 1995) up to the latest published data.
+Street SW1A 2AA`, or just a street name on its own (street-only searches
+match the exact full street name; adding a postcode allows partial names).
+Results always cover the full recorded history (the dataset starts in
+January 1995) up to the latest published data.
 
 - Scatter chart with a distinct marker shape and colour per property type,
   and the house number labelled beside each point (up to 250 visible points).
+- Zoomable chart, like the map: scroll to zoom around the cursor, drag to
+  pan, double-click or the reset button to fit; +/- buttons top-right.
 - Clickable legend: toggle property types on/off; the chart, table, and map
   all filter together.
 - Linked table below the chart — hovering a point highlights its row and

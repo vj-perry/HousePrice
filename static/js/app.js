@@ -40,6 +40,8 @@
   let geocodeFailed = false;
   let medianPrice = 0;
   let roomsByProperty = {};
+  let zoomDomain = null;   // {x0, x1, y0, y1} in data units, null = fitted
+  let isPanning = false;
 
   function propKey(s) {
     return [s.saon, s.paon, s.street, s.postcode].map((v) => v || "").join("|");
@@ -70,7 +72,13 @@
       }
       const sales = (body.sales || []).filter((s) => s.price != null && s.date);
       if (sales.length === 0) {
-        setStatus("No sales found for that search.", true);
+        setStatus(
+          "No sales found for that search." +
+          (body.street && !body.postcode
+            ? " Street-only searches need the exact full street name (e.g. 'Downing Street', not 'Downing') — adding a postcode allows partial street names."
+            : ""),
+          true
+        );
         return;
       }
       setStatus("", false);
@@ -83,8 +91,9 @@
       sales.forEach((s) => { s._outlier = s.price > outlierThreshold; });
 
       allSales = sales;
-      resultLabel = body.postcode
-        + (body.street ? " · " + (body.paon ? body.paon + " " : "") + body.street : "");
+      zoomDomain = null;
+      const streetPart = body.street ? (body.paon ? body.paon + " " : "") + body.street : "";
+      resultLabel = [body.postcode, streetPart].filter(Boolean).join(" · ");
       activeTypes = new Set(typesPresent(sales));
       geocodeCache = {};
       geocodeFailed = false;
@@ -240,6 +249,71 @@
     return el;
   }
 
+  // ---- Zoom state helpers ----
+
+  function fullDomainFor(sales) {
+    if (!sales.length) return null;
+    const dates = sales.map((s) => new Date(s.date).getTime());
+    const prices = sales.map((s) => s.price);
+    const xMin = Math.min(...dates);
+    const xMax = Math.max(...dates);
+    const yMaxRaw = Math.max(...prices);
+    const ticks = niceTicks(0, yMaxRaw, 5);
+    return {
+      x0: xMin,
+      x1: xMax === xMin ? xMin + 30 * 86400000 : xMax,
+      y0: 0,
+      y1: ticks[ticks.length - 1],
+    };
+  }
+
+  function clampDomain(d, full) {
+    if (!full) return null;
+    const fx = full.x1 - full.x0;
+    const fy = full.y1 - full.y0;
+    let sx = Math.min(Math.max(d.x1 - d.x0, fx / 200), fx);
+    let sy = Math.min(Math.max(d.y1 - d.y0, fy / 200), fy);
+    let cx = (d.x0 + d.x1) / 2;
+    let cy = (d.y0 + d.y1) / 2;
+    let x0 = cx - sx / 2, x1 = cx + sx / 2;
+    let y0 = cy - sy / 2, y1 = cy + sy / 2;
+    if (x0 < full.x0) { x0 = full.x0; x1 = x0 + sx; }
+    if (x1 > full.x1) { x1 = full.x1; x0 = x1 - sx; }
+    if (y0 < full.y0) { y0 = full.y0; y1 = y0 + sy; }
+    if (y1 > full.y1) { y1 = full.y1; y0 = y1 - sy; }
+    // fully zoomed out = back to the fitted view
+    if (sx >= fx * 0.999 && sy >= fy * 0.999) return null;
+    return { x0, x1, y0, y1 };
+  }
+
+  function setZoom(domain) {
+    zoomDomain = clampDomain(domain, fullDomainFor(chartSales()));
+    rerenderChart();
+  }
+
+  function zoomBy(factor, center) {
+    const d = zoomDomain || fullDomainFor(chartSales());
+    if (!d) return;
+    const c = center || { x: (d.x0 + d.x1) / 2, y: (d.y0 + d.y1) / 2 };
+    setZoom({
+      x0: c.x - (c.x - d.x0) * factor,
+      x1: c.x + (d.x1 - c.x) * factor,
+      y0: c.y - (c.y - d.y0) * factor,
+      y1: c.y + (d.y1 - c.y) * factor,
+    });
+  }
+
+  function rerenderChart() {
+    renderChart(chartSales());
+  }
+
+  document.getElementById("chart-zoom-in").addEventListener("click", () => zoomBy(0.6));
+  document.getElementById("chart-zoom-out").addEventListener("click", () => zoomBy(1 / 0.6));
+  document.getElementById("chart-zoom-reset").addEventListener("click", () => {
+    zoomDomain = null;
+    rerenderChart();
+  });
+
   function renderChart(sales) {
     chartMount.innerHTML = "";
     if (sales.length === 0) {
@@ -255,16 +329,12 @@
     const innerW = width - MARGIN.left - MARGIN.right;
     const innerH = height - MARGIN.top - MARGIN.bottom;
 
-    const dates = sales.map((s) => new Date(s.date).getTime());
-    const prices = sales.map((s) => s.price);
-    const xMin = Math.min(...dates);
-    const xMax = Math.max(...dates);
-    const yMaxRaw = Math.max(...prices);
-    const yTicks = niceTicks(0, yMaxRaw, 5);
-    const yMax = yTicks[yTicks.length - 1];
+    const domain = zoomDomain || fullDomainFor(sales);
+    const { x0, x1, y0, y1 } = domain;
+    const yTicks = ticksInRange(y0, y1, 5);
 
-    const xScale = (t) => innerW * (xMax === xMin ? 0.5 : (t - xMin) / (xMax - xMin));
-    const yScale = (p) => innerH - innerH * (p / yMax);
+    const xScale = (t) => innerW * ((t - x0) / (x1 - x0));
+    const yScale = (p) => innerH - innerH * ((p - y0) / (y1 - y0));
 
     const svg = document.createElementNS(NS, "svg");
     svg.setAttribute("viewBox", `0 0 ${width} ${height}`);
@@ -276,6 +346,20 @@
     const root = document.createElementNS(NS, "g");
     root.setAttribute("transform", `translate(${MARGIN.left},${MARGIN.top})`);
     svg.appendChild(root);
+
+    // Marks are clipped to the plot area so zooming never spills them
+    // over the axes.
+    const defs = document.createElementNS(NS, "defs");
+    const clip = document.createElementNS(NS, "clipPath");
+    clip.setAttribute("id", "plot-clip");
+    const clipRect = document.createElementNS(NS, "rect");
+    clipRect.setAttribute("x", -6);
+    clipRect.setAttribute("y", -6);
+    clipRect.setAttribute("width", innerW + 12);
+    clipRect.setAttribute("height", innerH + 12);
+    clip.appendChild(clipRect);
+    defs.appendChild(clip);
+    svg.appendChild(defs);
 
     const gridlineColor = cssVar("--gridline");
     const mutedColor = cssVar("--text-muted");
@@ -313,7 +397,7 @@
     baseline.setAttribute("stroke-width", "1");
     root.appendChild(baseline);
 
-    const xTicks = dateTicks(xMin, xMax, 6);
+    const xTicks = dateTicks(x0, x1, 6);
     for (const t of xTicks) {
       const x = xScale(t);
       const label = document.createElementNS(NS, "text");
@@ -322,21 +406,38 @@
       label.setAttribute("text-anchor", "middle");
       label.setAttribute("fill", mutedColor);
       label.setAttribute("font-size", "12");
-      label.textContent = formatDateTick(t, xMax - xMin);
+      label.textContent = formatDateTick(t, x1 - x0);
       root.appendChild(label);
     }
 
+    const marksGroup = document.createElementNS(NS, "g");
+    marksGroup.setAttribute("clip-path", "url(#plot-clip)");
+    root.appendChild(marksGroup);
+
     const hitTargets = [];
-    const drawLabels = sales.length <= LABEL_LIMIT;
+    // Count only points inside the current view when deciding whether
+    // per-point labels fit — zooming in brings labels back.
+    const inView = sales.filter((s) => {
+      const t = new Date(s.date).getTime();
+      return t >= x0 && t <= x1 && s.price >= y0 && s.price <= y1;
+    });
+    const drawLabels = inView.length <= LABEL_LIMIT;
+    const xPad = (x1 - x0) * 0.02;
+    const yPad = (y1 - y0) * 0.02;
 
     for (const sale of sales) {
+      const t = new Date(sale.date).getTime();
+      // Skip marks well outside the view; the clip hides near-edge ones.
+      if (t < x0 - xPad || t > x1 + xPad || sale.price < y0 - yPad || sale.price > y1 + yPad) {
+        continue;
+      }
       const st = styleFor(typeKey(sale));
       const color = cssVar(st.colorVar);
-      const cx = xScale(new Date(sale.date).getTime());
+      const cx = xScale(t);
       const cy = yScale(sale.price);
 
       const mark = makeMarker(st.shape, cx, cy, 4.5, color, surfaceColor);
-      root.appendChild(mark);
+      marksGroup.appendChild(mark);
 
       if (drawLabels && sale.paon) {
         const label = document.createElementNS(NS, "text");
@@ -346,7 +447,7 @@
         label.setAttribute("fill", mutedColor);
         label.setAttribute("font-size", "10");
         label.textContent = sale.paon;
-        root.appendChild(label);
+        marksGroup.appendChild(label);
       }
 
       hitTargets.push({ cx, cy, sale, color, el: mark, id: sale._id, key: propKey(sale) });
@@ -394,6 +495,7 @@
     }
 
     overlay.addEventListener("pointermove", (evt) => {
+      if (isPanning) return;
       const rect = overlay.getBoundingClientRect();
       const px = ((evt.clientX - rect.left) / rect.width) * innerW;
       const py = ((evt.clientY - rect.top) / rect.height) * innerH;
@@ -431,6 +533,63 @@
       crosshair.setAttribute("visibility", "hidden");
       clearHighlight();
     });
+
+    // Wheel = zoom, centred on the cursor (like the map).
+    overlay.addEventListener("wheel", (evt) => {
+      evt.preventDefault();
+      const rect = overlay.getBoundingClientRect();
+      const fx = (evt.clientX - rect.left) / rect.width;
+      const fy = (evt.clientY - rect.top) / rect.height;
+      const center = {
+        x: x0 + fx * (x1 - x0),
+        y: y0 + (1 - fy) * (y1 - y0),
+      };
+      zoomBy(evt.deltaY < 0 ? 0.75 : 1 / 0.75, center);
+    }, { passive: false });
+
+    // Drag = pan. The chart re-renders each move, so the handlers live on
+    // window for the duration of the drag.
+    overlay.addEventListener("pointerdown", (evt) => {
+      if (evt.button !== 0) return;
+      evt.preventDefault();
+      const startX = evt.clientX;
+      const startY = evt.clientY;
+      const startDomain = { x0, x1, y0, y1 };
+      const rect = overlay.getBoundingClientRect();
+      const scaleX = (x1 - x0) / rect.width;
+      const scaleY = (y1 - y0) / rect.height;
+      let moved = false;
+
+      const onMove = (ev) => {
+        const dx = ev.clientX - startX;
+        const dy = ev.clientY - startY;
+        if (!moved && Math.hypot(dx, dy) < 3) return;
+        moved = true;
+        isPanning = true;
+        tooltipEl.hidden = true;
+        setZoom({
+          x0: startDomain.x0 - dx * scaleX,
+          x1: startDomain.x1 - dx * scaleX,
+          y0: startDomain.y0 + dy * scaleY,
+          y1: startDomain.y1 + dy * scaleY,
+        });
+      };
+      const onUp = () => {
+        window.removeEventListener("pointermove", onMove);
+        window.removeEventListener("pointerup", onUp);
+        setTimeout(() => { isPanning = false; }, 0);
+      };
+      window.addEventListener("pointermove", onMove);
+      window.addEventListener("pointerup", onUp);
+    });
+
+    // Double-click = reset to the fitted view.
+    overlay.addEventListener("dblclick", () => {
+      zoomDomain = null;
+      rerenderChart();
+    });
+
+    overlay.style.cursor = zoomDomain ? "grab" : "crosshair";
 
     chartMount.appendChild(svg);
   }
@@ -748,7 +907,8 @@
     const d = new Date(t);
     const spanYears = spanMs / (365 * 24 * 3600 * 1000);
     if (spanYears > 4) return String(d.getFullYear());
-    return d.toLocaleDateString("en-GB", { month: "short", year: "numeric" });
+    if (spanYears > 0.25) return d.toLocaleDateString("en-GB", { month: "short", year: "numeric" });
+    return d.toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "2-digit" });
   }
 
   function niceTicks(min, max, count) {
@@ -778,6 +938,29 @@
     const step = (max - min) / (count - 1);
     const ticks = [];
     for (let i = 0; i < count; i++) ticks.push(min + step * i);
+    return ticks;
+  }
+
+  // Clean tick values covering [min, max] — unlike niceTicks, the range
+  // does not have to start at zero (needed once the chart is zoomed).
+  function ticksInRange(min, max, count) {
+    if (max <= min) max = min + 1;
+    const rawStep = (max - min) / count;
+    const magnitude = Math.pow(10, Math.floor(Math.log10(rawStep)));
+    const residual = rawStep / magnitude;
+    let step;
+    if (residual > 5) step = 10 * magnitude;
+    else if (residual > 2) step = 5 * magnitude;
+    else if (residual > 1) step = 2 * magnitude;
+    else step = magnitude;
+
+    const ticks = [];
+    let tick = Math.ceil(min / step) * step;
+    while (tick <= max + step * 1e-9) {
+      ticks.push(tick);
+      tick += step;
+      if (ticks.length > 20) break;
+    }
     return ticks;
   }
 

@@ -119,9 +119,10 @@ _OPTIONAL_FIELDS = """
 
 
 def parse_query(q: str):
-    """Split a free-text search like 'Downing Street SW1A' or 'SW1A 2AA'
-    into (postcode, street). The postcode may appear anywhere in the text;
-    whatever remains is treated as the street name."""
+    """Split a free-text search like 'Downing Street SW1A', 'SW1A 2AA', or
+    just 'Downing Street' into (postcode, street, paon). The postcode may
+    appear anywhere in the text; whatever remains is the street name; with
+    no postcode at all, the whole text is the street name."""
     q = " ".join(q.split())
     if not q:
         raise LandRegistryError("Enter a search")
@@ -131,15 +132,18 @@ def parse_query(q: str):
         postcode = f"{match.group(1).upper()} {match.group(2).upper()}"
     else:
         match = _OUTCODE_IN_TEXT.search(q)
-        if not match:
-            raise LandRegistryError(
-                "Include a postcode in your search — full like 'SW1A 2AA' "
-                "or partial like 'SW1A'"
-            )
-        postcode = match.group(1).upper()
+        postcode = match.group(1).upper() if match else None
 
-    street = (q[:match.start()] + " " + q[match.end():]).strip(" ,")
+    if match:
+        street = (q[:match.start()] + " " + q[match.end():]).strip(" ,")
+    else:
+        street = q.strip(" ,")
     street = " ".join(street.split())
+
+    if not postcode and not street:
+        raise LandRegistryError(
+            "Enter a postcode ('SW1A 2AA' or 'SW1A'), a street name, or both"
+        )
 
     # A leading house number ("10 Downing Street") is a property filter,
     # not part of the street name.
@@ -152,30 +156,42 @@ def parse_query(q: str):
     return postcode, (street or None), paon
 
 
-def search_sales(postcode: str, street: str | None = None, paon: str | None = None) -> list:
-    """All recorded sales for a postcode (full or district), optionally
-    narrowed by street name and house number. Returns the full recorded
-    history — the Price Paid dataset starts in January 1995 — up to the
-    latest published data.
+def search_sales(postcode: str | None, street: str | None = None, paon: str | None = None) -> list:
+    """All recorded sales for a postcode (full or district) and/or street,
+    optionally narrowed by house number. Returns the full recorded history —
+    the Price Paid dataset starts in January 1995 — up to the latest
+    published data.
     """
-    postcode = postcode.strip().upper()
+    if not postcode and not street:
+        raise LandRegistryError("Provide a postcode, a street name, or both")
 
-    if POSTCODE_RE.match(postcode):
-        postcode_filter = f'FILTER(?postcode = "{_escape_literal(postcode)}")'
-    elif OUTCODE_RE.match(postcode):
-        postcode_filter = (
-            f'FILTER(STRSTARTS(STR(?postcode), "{_escape_literal(postcode)} "))'
-        )
-    else:
-        raise LandRegistryError(
-            f"'{postcode}' does not look like a UK postcode (e.g. 'SW1A 1AA') "
-            "or district (e.g. 'SW1A')"
-        )
+    postcode_filter = ""
+    if postcode:
+        postcode = postcode.strip().upper()
+        if POSTCODE_RE.match(postcode):
+            postcode_filter = f'FILTER(?postcode = "{_escape_literal(postcode)}")'
+        elif OUTCODE_RE.match(postcode):
+            postcode_filter = (
+                f'FILTER(STRSTARTS(STR(?postcode), "{_escape_literal(postcode)} "))'
+            )
+        else:
+            raise LandRegistryError(
+                f"'{postcode}' does not look like a UK postcode (e.g. 'SW1A 1AA') "
+                "or district (e.g. 'SW1A')"
+            )
 
+    street_pattern = ""
     street_filter = ""
-    if street:
+    if street and postcode:
+        # Postcode anchors the query, so a flexible partial match is cheap.
         needle = _escape_literal(street.strip())
         street_filter = f'FILTER(CONTAINS(LCASE(STR(?street)), LCASE("{needle}")))'
+    elif street:
+        # Street-only search: match the stored literal exactly (PPD stores
+        # street names uppercase). An index lookup on a constant is fast;
+        # a CONTAINS scan over every address in England & Wales is not.
+        literal = _escape_literal(street.strip().upper())
+        street_pattern = f'?addr lrcommon:street "{literal}" .'
 
     query = f"""
     {PREFIXES}
@@ -185,6 +201,7 @@ def search_sales(postcode: str, street: str | None = None, paon: str | None = No
               lrppi:pricePaid ?amount ;
               lrppi:transactionDate ?date .
       ?addr lrcommon:postcode ?postcode .
+      {street_pattern}
       {_OPTIONAL_FIELDS}
       {postcode_filter}
       {street_filter}

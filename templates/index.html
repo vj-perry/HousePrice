@@ -17,7 +17,7 @@
     <form id="search-form" class="filter-row" autocomplete="off">
       <label class="field field-grow">
         <span>Search</span>
-        <input type="text" name="q" placeholder="Postcode and/or street — e.g. 'SW1A 2AA', 'SW1A Downing Street'" required>
+        <input type="text" name="q" placeholder="Postcode, street, or both — e.g. 'SW1A 2AA', 'Downing Street', '10 Downing Street SW1A'" required>
       </label>
       <button type="submit" class="submit-btn">Search</button>
     </form>
@@ -32,6 +32,11 @@
       <div id="legend" class="legend" aria-hidden="true"></div>
       <div class="chart-wrap">
         <div id="chart-mount"></div>
+        <div class="chart-zoom" role="group" aria-label="Chart zoom">
+          <button type="button" id="chart-zoom-in" title="Zoom in" aria-label="Zoom in">+</button>
+          <button type="button" id="chart-zoom-out" title="Zoom out" aria-label="Zoom out">&minus;</button>
+          <button type="button" id="chart-zoom-reset" title="Reset zoom" aria-label="Reset zoom">&#8634;</button>
+        </div>
         <div id="tooltip" class="tooltip" hidden></div>
       </div>
       <p id="outlier-note" class="footnote" hidden></p>
