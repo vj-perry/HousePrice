@@ -1,10 +1,16 @@
 (function () {
   "use strict";
 
-  const SERIES_COLORS = [
-    "--series-1", "--series-2", "--series-3", "--series-4",
-    "--series-5", "--series-6", "--series-7", "--series-8",
-  ];
+  // Fixed identity per property type: colour AND marker shape, so the
+  // series never rely on colour alone.
+  const TYPE_STYLES = {
+    "Detached":        { colorVar: "--series-1", shape: "circle" },
+    "Semi-detached":   { colorVar: "--series-2", shape: "square" },
+    "Terraced":        { colorVar: "--series-3", shape: "triangle" },
+    "Flat/Maisonette": { colorVar: "--series-4", shape: "diamond" },
+  };
+  const OTHER_STYLE = { colorVar: "--text-muted", shape: "cross" };
+  const TYPE_ORDER = ["Detached", "Semi-detached", "Terraced", "Flat/Maisonette"];
 
   const form = document.getElementById("search-form");
   const statusEl = document.getElementById("status");
@@ -13,72 +19,29 @@
   const legendEl = document.getElementById("legend");
   const chartMount = document.getElementById("chart-mount");
   const tooltipEl = document.getElementById("tooltip");
-  const tableToggle = document.getElementById("table-toggle");
-  const tableWrap = document.getElementById("table-wrap");
   const tableBody = document.querySelector("#data-table tbody");
+  const tableWrap = document.querySelector(".table-wrap");
 
-  let mode = "property";
-  let lastRender = null;
-
-  document.querySelectorAll(".mode-btn").forEach((btn) => {
-    btn.addEventListener("click", () => {
-      mode = btn.dataset.mode;
-      document.querySelectorAll(".mode-btn").forEach((b) => {
-        b.classList.toggle("is-active", b === btn);
-        b.setAttribute("aria-selected", String(b === btn));
-      });
-      document.querySelectorAll("[data-mode-fields]").forEach((f) => {
-        f.hidden = f.dataset.modeFields !== mode;
-      });
-    });
-  });
-
-  tableToggle.addEventListener("click", () => {
-    const showing = !tableWrap.hidden;
-    tableWrap.hidden = showing;
-    tableToggle.textContent = showing ? "Show table" : "Hide table";
-  });
+  let lastSales = null;
 
   form.addEventListener("submit", async (evt) => {
     evt.preventDefault();
     const data = new FormData(form);
-    let url;
-    let title;
-
-    if (mode === "property") {
-      const postcode = (data.get("postcode") || "").trim();
-      if (!postcode) {
-        setStatus("Enter a postcode.", true);
-        return;
-      }
-      const params = new URLSearchParams({ postcode });
-      const house = (data.get("house") || "").trim();
-      if (house) params.set("house", house);
-      url = "/api/property-sales?" + params.toString();
-      title = "Sales at " + postcode.toUpperCase() + (house ? ", " + house : "");
-    } else {
-      const area = (data.get("area") || "").trim();
-      const town = (data.get("town") || "").trim();
-      if (!area && !town) {
-        setStatus("Enter a postcode area or a town.", true);
-        return;
-      }
-      const params = new URLSearchParams();
-      if (area) params.set("area", area);
-      if (town) params.set("town", town);
-      const dateFrom = data.get("date_from");
-      const dateTo = data.get("date_to");
-      if (dateFrom) params.set("date_from", dateFrom);
-      if (dateTo) params.set("date_to", dateTo);
-      url = "/api/area-sales?" + params.toString();
-      title = "Sales in " + (area ? area.toUpperCase() : town);
+    const postcode = (data.get("postcode") || "").trim();
+    if (!postcode) {
+      setStatus("Enter a postcode.", true);
+      return;
     }
+    const street = (data.get("street") || "").trim();
 
-    setStatus("Loading…", false);
+    const params = new URLSearchParams({ postcode });
+    if (street) params.set("street", street);
+
+    setStatus("Loading from HM Land Registry…", false);
     resultCard.hidden = true;
 
     try {
-      const resp = await fetch(url);
+      const resp = await fetch("/api/sales?" + params.toString());
       const body = await resp.json();
       if (!resp.ok) {
         throw new Error(body.error || "Request failed");
@@ -89,9 +52,10 @@
         return;
       }
       setStatus("", false);
-      renderResult(sales, title, mode);
+      const title = postcode.toUpperCase() + (street ? " · " + street : "");
+      renderResult(sales, title);
     } catch (err) {
-      setStatus(err.message, true);
+      setStatus(err.message || "Something went wrong.", true);
     }
   });
 
@@ -100,103 +64,116 @@
     statusEl.classList.toggle("is-error", !!isError);
   }
 
-  function renderResult(sales, title, currentMode) {
-    resultTitle.textContent = title + " (" + sales.length + (sales.length === 1 ? " sale" : " sales") + ")";
+  function styleFor(type) {
+    return TYPE_STYLES[type] || OTHER_STYLE;
+  }
+
+  function renderResult(sales, title) {
+    resultTitle.textContent = title + " — " + sales.length + (sales.length === 1 ? " sale" : " sales");
     resultCard.hidden = false;
-    tableWrap.hidden = true;
-    tableToggle.textContent = "Show table";
 
     sales.sort((a, b) => a.date.localeCompare(b.date));
+    lastSales = sales;
 
-    const series = currentMode === "property"
-      ? groupByAddress(sales)
-      : groupByPropertyType(sales);
-
-    renderLegend(series, currentMode === "property");
-    lastRender = { sales, series, isLineMode: currentMode === "property" };
-    renderChart(sales, series, currentMode === "property");
+    renderLegend(sales);
     renderTable(sales);
+    renderChart(sales);
   }
 
-  function groupByAddress(sales) {
-    const keys = [];
-    const groups = new Map();
-    for (const s of sales) {
-      const key = [s.saon, s.paon, s.street].filter(Boolean).join(" ") || "Unknown address";
-      if (!groups.has(key)) {
-        keys.push(key);
-        groups.set(key, []);
-      }
-      groups.get(key).push(s);
+  function typesPresent(sales) {
+    const present = new Set(sales.map((s) => s.property_type || "Other"));
+    const ordered = TYPE_ORDER.filter((t) => present.has(t));
+    for (const t of present) {
+      if (!TYPE_ORDER.includes(t)) ordered.push(t);
     }
-    return keys.map((key, i) => ({
-      key,
-      label: key,
-      colorVar: SERIES_COLORS[i % SERIES_COLORS.length],
-      points: groups.get(key),
-      drawLine: groups.get(key).length > 1,
-    }));
+    return ordered;
   }
 
-  const TYPE_ORDER = ["Detached", "Semi-detached", "Terraced", "Flat/Maisonette", "Other"];
+  // ---- Legend (symbol + colour per property type) ----
 
-  function groupByPropertyType(sales) {
-    const groups = new Map();
-    for (const s of sales) {
-      const key = s.property_type || "Unknown";
-      if (!groups.has(key)) groups.set(key, []);
-      groups.get(key).push(s);
-    }
-    const orderedKeys = TYPE_ORDER.filter((t) => groups.has(t))
-      .concat([...groups.keys()].filter((k) => !TYPE_ORDER.includes(k) && k !== "Unknown"))
-      .concat(groups.has("Unknown") ? ["Unknown"] : []);
-
-    return orderedKeys.map((key, i) => ({
-      key,
-      label: key,
-      colorVar: key === "Unknown" ? "--text-muted" : SERIES_COLORS[i % SERIES_COLORS.length],
-      points: groups.get(key),
-      drawLine: false,
-    }));
-  }
-
-  function renderLegend(series, isLineMode) {
+  function renderLegend(sales) {
     legendEl.innerHTML = "";
-    if (series.length < 2) {
+    const types = typesPresent(sales);
+    if (types.length < 2) {
       legendEl.setAttribute("aria-hidden", "true");
       return;
     }
     legendEl.removeAttribute("aria-hidden");
-    for (const s of series) {
+    for (const type of types) {
+      const st = styleFor(type);
       const item = document.createElement("span");
       item.className = "legend-item";
 
-      const key = document.createElement("span");
-      key.className = isLineMode ? "legend-key" : "legend-dot";
-      key.style.background = `var(${s.colorVar})`;
+      const swatch = document.createElementNS(NS, "svg");
+      swatch.setAttribute("width", 14);
+      swatch.setAttribute("height", 14);
+      swatch.setAttribute("viewBox", "0 0 14 14");
+      swatch.appendChild(makeMarker(st.shape, 7, 7, 5, cssVar(st.colorVar), "none"));
 
       const label = document.createElement("span");
-      label.textContent = s.label;
+      label.textContent = type;
 
-      item.append(key, label);
+      item.append(swatch, label);
       legendEl.appendChild(item);
     }
   }
 
-  // ---- Chart rendering (plain SVG, no dependencies) ----
+  // ---- Chart: scatter plot, one marker shape per property type ----
 
   const NS = "http://www.w3.org/2000/svg";
   const MARGIN = { top: 16, right: 20, bottom: 36, left: 68 };
 
-  function renderChart(allSales, series, isLineMode) {
+  function makeMarker(shape, cx, cy, r, fill, stroke) {
+    let el;
+    if (shape === "circle") {
+      el = document.createElementNS(NS, "circle");
+      el.setAttribute("cx", cx);
+      el.setAttribute("cy", cy);
+      el.setAttribute("r", r);
+    } else if (shape === "square") {
+      el = document.createElementNS(NS, "rect");
+      const side = r * 1.8;
+      el.setAttribute("x", cx - side / 2);
+      el.setAttribute("y", cy - side / 2);
+      el.setAttribute("width", side);
+      el.setAttribute("height", side);
+    } else if (shape === "triangle") {
+      el = document.createElementNS(NS, "polygon");
+      const h = r * 1.2;
+      el.setAttribute("points",
+        `${cx},${cy - h} ${cx + h},${cy + h * 0.8} ${cx - h},${cy + h * 0.8}`);
+    } else if (shape === "diamond") {
+      el = document.createElementNS(NS, "polygon");
+      const d = r * 1.25;
+      el.setAttribute("points",
+        `${cx},${cy - d} ${cx + d},${cy} ${cx},${cy + d} ${cx - d},${cy}`);
+    } else { // cross
+      el = document.createElementNS(NS, "polygon");
+      const a = r * 0.42, b = r * 1.25;
+      el.setAttribute("points", [
+        `${cx - a},${cy - b}`, `${cx + a},${cy - b}`, `${cx + a},${cy - a}`,
+        `${cx + b},${cy - a}`, `${cx + b},${cy + a}`, `${cx + a},${cy + a}`,
+        `${cx + a},${cy + b}`, `${cx - a},${cy + b}`, `${cx - a},${cy + a}`,
+        `${cx - b},${cy + a}`, `${cx - b},${cy - a}`, `${cx - a},${cy - a}`,
+      ].join(" "));
+    }
+    el.setAttribute("fill", fill);
+    if (stroke && stroke !== "none") {
+      el.setAttribute("stroke", stroke);
+      el.setAttribute("stroke-width", "2");
+    }
+    return el;
+  }
+
+  function renderChart(sales) {
     chartMount.innerHTML = "";
     const width = Math.max(chartMount.clientWidth || 800, 320);
     const height = 380;
     const innerW = width - MARGIN.left - MARGIN.right;
     const innerH = height - MARGIN.top - MARGIN.bottom;
 
-    const dates = allSales.map((s) => new Date(s.date).getTime());
-    const prices = allSales.map((s) => s.price);
+    const dates = sales.map((s) => new Date(s.date).getTime());
+    const prices = sales.map((s) => s.price);
     const xMin = Math.min(...dates);
     const xMax = Math.max(...dates);
     const yMaxRaw = Math.max(...prices);
@@ -220,8 +197,8 @@
     const gridlineColor = cssVar("--gridline");
     const mutedColor = cssVar("--text-muted");
     const axisColor = cssVar("--axis");
+    const surfaceColor = cssVar("--surface-1");
 
-    // horizontal gridlines + y labels
     for (const tick of yTicks) {
       const y = yScale(tick);
       const line = document.createElementNS(NS, "line");
@@ -244,7 +221,6 @@
       root.appendChild(label);
     }
 
-    // x axis baseline
     const baseline = document.createElementNS(NS, "line");
     baseline.setAttribute("x1", 0);
     baseline.setAttribute("x2", innerW);
@@ -254,7 +230,6 @@
     baseline.setAttribute("stroke-width", "1");
     root.appendChild(baseline);
 
-    // x ticks
     const xTicks = dateTicks(xMin, xMax, 6);
     for (const t of xTicks) {
       const x = xScale(t);
@@ -268,43 +243,20 @@
       root.appendChild(label);
     }
 
-    // series: lines (property mode only) then markers on top
     const hitTargets = [];
 
-    for (const s of series) {
-      const color = cssVar(s.colorVar);
-      if (isLineMode && s.drawLine) {
-        const pts = s.points
-          .map((p) => `${xScale(new Date(p.date).getTime())},${yScale(p.price)}`)
-          .join(" ");
-        const poly = document.createElementNS(NS, "polyline");
-        poly.setAttribute("points", pts);
-        poly.setAttribute("fill", "none");
-        poly.setAttribute("stroke", color);
-        poly.setAttribute("stroke-width", "2");
-        poly.setAttribute("stroke-linejoin", "round");
-        poly.setAttribute("stroke-linecap", "round");
-        root.appendChild(poly);
-      }
+    sales.forEach((sale, index) => {
+      const st = styleFor(sale.property_type || "Other");
+      const color = cssVar(st.colorVar);
+      const cx = xScale(new Date(sale.date).getTime());
+      const cy = yScale(sale.price);
 
-      for (const p of s.points) {
-        const cx = xScale(new Date(p.date).getTime());
-        const cy = yScale(p.price);
+      const mark = makeMarker(st.shape, cx, cy, 4.5, color, surfaceColor);
+      root.appendChild(mark);
 
-        const dot = document.createElementNS(NS, "circle");
-        dot.setAttribute("cx", cx);
-        dot.setAttribute("cy", cy);
-        dot.setAttribute("r", 4.5);
-        dot.setAttribute("fill", color);
-        dot.setAttribute("stroke", cssVar("--surface-1"));
-        dot.setAttribute("stroke-width", "2");
-        root.appendChild(dot);
+      hitTargets.push({ cx, cy, sale, color, el: mark, index });
+    });
 
-        hitTargets.push({ cx, cy, sale: p, color, el: dot });
-      }
-    }
-
-    // crosshair line (hidden until hover)
     const crosshair = document.createElementNS(NS, "line");
     crosshair.setAttribute("y1", 0);
     crosshair.setAttribute("y2", innerH);
@@ -313,7 +265,6 @@
     crosshair.setAttribute("visibility", "hidden");
     root.appendChild(crosshair);
 
-    // transparent overlay to catch pointer events across the whole plot
     const overlay = document.createElementNS(NS, "rect");
     overlay.setAttribute("x", 0);
     overlay.setAttribute("y", 0);
@@ -326,7 +277,8 @@
 
     function clearHighlight() {
       if (highlighted) {
-        highlighted.setAttribute("r", 4.5);
+        highlighted.el.removeAttribute("transform");
+        setRowHighlight(highlighted.index, false);
         highlighted = null;
       }
     }
@@ -352,15 +304,20 @@
         return;
       }
 
-      clearHighlight();
-      nearest.el.setAttribute("r", 6);
-      highlighted = nearest.el;
+      if (highlighted && highlighted !== nearest) clearHighlight();
+
+      if (highlighted !== nearest) {
+        nearest.el.setAttribute("transform",
+          `translate(${nearest.cx},${nearest.cy}) scale(1.35) translate(${-nearest.cx},${-nearest.cy})`);
+        setRowHighlight(nearest.index, true);
+        highlighted = nearest;
+      }
 
       crosshair.setAttribute("x1", nearest.cx);
       crosshair.setAttribute("x2", nearest.cx);
       crosshair.setAttribute("visibility", "visible");
 
-      showTooltip(nearest, chartMount, MARGIN);
+      showTooltip(nearest, MARGIN);
     });
 
     overlay.addEventListener("pointerleave", () => {
@@ -372,7 +329,24 @@
     chartMount.appendChild(svg);
   }
 
-  function showTooltip(hit, mount, margin) {
+  // ---- Chart ↔ table linking ----
+
+  function setRowHighlight(index, on) {
+    const row = tableBody.querySelector(`tr[data-index="${index}"]`);
+    if (!row) return;
+    row.classList.toggle("is-hover", on);
+    if (on) {
+      const rowTop = row.offsetTop;
+      const rowBottom = rowTop + row.offsetHeight;
+      const viewTop = tableWrap.scrollTop;
+      const viewBottom = viewTop + tableWrap.clientHeight;
+      if (rowTop < viewTop || rowBottom > viewBottom) {
+        tableWrap.scrollTop = rowTop - tableWrap.clientHeight / 2 + row.offsetHeight / 2;
+      }
+    }
+  }
+
+  function showTooltip(hit, margin) {
     const sale = hit.sale;
     tooltipEl.innerHTML = "";
 
@@ -389,11 +363,12 @@
     const dateRow = document.createElement("div");
     dateRow.textContent = formatFullDate(sale.date);
 
-    const addrRow = document.createElement("div");
-    addrRow.textContent = sale.address || "";
-
     tooltipEl.append(priceRow, dateRow);
-    if (sale.address) tooltipEl.append(addrRow);
+    if (sale.address) {
+      const addrRow = document.createElement("div");
+      addrRow.textContent = sale.address;
+      tooltipEl.append(addrRow);
+    }
     if (sale.property_type) {
       const typeRow = document.createElement("div");
       typeRow.textContent = sale.property_type;
@@ -407,8 +382,9 @@
 
   function renderTable(sales) {
     tableBody.innerHTML = "";
-    for (const s of sales) {
+    sales.forEach((s, index) => {
       const tr = document.createElement("tr");
+      tr.dataset.index = index;
 
       const tdDate = document.createElement("td");
       tdDate.textContent = s.date;
@@ -425,7 +401,7 @@
 
       tr.append(tdDate, tdPrice, tdAddr, tdType);
       tableBody.appendChild(tr);
-    }
+    });
   }
 
   // ---- formatting & scale helpers ----
@@ -483,8 +459,8 @@
   }
 
   window.addEventListener("resize", debounce(() => {
-    if (lastRender && !resultCard.hidden) {
-      renderChart(lastRender.sales, lastRender.series, lastRender.isLineMode);
+    if (lastSales && !resultCard.hidden) {
+      renderChart(lastSales);
     }
   }, 300));
 

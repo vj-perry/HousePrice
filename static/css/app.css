@@ -19,6 +19,7 @@
   --series-8: #eb6834; /* orange */
 
   --critical: #d03b3b;
+  --row-highlight: rgba(42, 120, 214, 0.12);
 }
 
 @media (prefers-color-scheme: dark) {
@@ -41,6 +42,7 @@
     --series-6: #e66767;
     --series-7: #d55181;
     --series-8: #d95926;
+    --row-highlight: rgba(57, 135, 229, 0.18);
   }
 }
 :root[data-theme="dark"] {
@@ -62,6 +64,7 @@
   --series-6: #e66767;
   --series-7: #d55181;
   --series-8: #d95926;
+  --row-highlight: rgba(57, 135, 229, 0.18);
 }
 
 * { box-sizing: border-box; }
@@ -100,32 +103,6 @@ body {
   padding: 16px;
 }
 
-.mode-switch {
-  display: flex;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  overflow: hidden;
-  flex-shrink: 0;
-}
-.mode-btn {
-  border: none;
-  background: transparent;
-  color: var(--text-secondary);
-  padding: 8px 14px;
-  font-size: 13px;
-  cursor: pointer;
-}
-.mode-btn.is-active {
-  background: var(--series-1);
-  color: #fff;
-}
-
-.fields {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 12px;
-  flex: 1;
-}
 .field {
   display: flex;
   flex-direction: column;
@@ -134,6 +111,7 @@ body {
   color: var(--text-secondary);
   min-width: 130px;
 }
+.field-grow { flex: 1; }
 .field em { color: var(--text-muted); font-style: normal; }
 .field input {
   font: inherit;
@@ -187,15 +165,6 @@ body {
   font-size: 16px;
   margin: 0;
 }
-.link-btn {
-  background: none;
-  border: none;
-  color: var(--series-1);
-  font-size: 13px;
-  cursor: pointer;
-  padding: 0;
-}
-
 .legend {
   display: flex;
   flex-wrap: wrap;
@@ -205,18 +174,7 @@ body {
   margin-bottom: 8px;
 }
 .legend-item { display: flex; align-items: center; gap: 6px; }
-.legend-key {
-  width: 14px;
-  height: 2px;
-  border-radius: 1px;
-  display: inline-block;
-}
-.legend-dot {
-  width: 9px;
-  height: 9px;
-  border-radius: 50%;
-  display: inline-block;
-}
+.legend-item svg { display: block; }
 
 .chart-wrap {
   position: relative;
@@ -267,8 +225,12 @@ th {
   position: sticky;
   top: 0;
   background: var(--surface-1);
+  z-index: 1;
 }
 td.num { font-variant-numeric: tabular-nums; }
+tbody tr.is-hover td {
+  background: var(--row-highlight);
+}
 
 @media (max-width: 640px) {
   .filter-row { flex-direction: column; align-items: stretch; }

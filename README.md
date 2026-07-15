@@ -4,13 +4,12 @@ A small Flask app that plots sold-price history from HM Land Registry's
 [Price Paid Data](https://landregistry.data.gov.uk/app/doc/ppd/), with date of
 sale on the x-axis and price on the y-axis.
 
-Two search modes:
-
-- **One property** — enter a postcode (optionally narrowed by house number/name)
-  to see every recorded sale at that address.
-- **Area trend** — enter a postcode area/district (e.g. `SW1A`) or a town, with
-  an optional date range, to see a scatter of all sales in that area, coloured
-  by property type.
+One simple search: a postcode — full (`SW1A 1AA`) or district (`SW1A`) —
+optionally narrowed by street name. Results always cover the full recorded
+history (the dataset starts in January 1995) up to the latest published data.
+The chart is a scatter plot with a distinct marker shape and colour per
+property type (detached, semi-detached, terraced, flat/maisonette), and the
+table below is linked to the chart — hovering a point highlights its row.
 
 Data is fetched live from Land Registry's public SPARQL endpoint — nothing is
 downloaded or stored locally.
@@ -32,11 +31,12 @@ Then open http://127.0.0.1:5000.
   `https://landregistry.data.gov.uk/landregistry/query` and parses the
   SPARQL-JSON results into plain rows (`date`, `price`, `address`,
   `property_type`, ...).
-- `app.py` exposes two JSON endpoints, `/api/property-sales` and
-  `/api/area-sales`, that the frontend calls.
+- `app.py` exposes one JSON endpoint, `/api/sales?postcode=…&street=…`,
+  that the frontend calls.
 - The frontend (`templates/index.html`, `static/js/app.js`) is plain
-  HTML/CSS/JS — a hand-rolled SVG chart with hover tooltips, a crosshair, a
-  legend, and a toggleable data table, no charting library dependency.
+  HTML/CSS/JS — a hand-rolled SVG scatter chart with per-type marker shapes,
+  hover tooltips, a crosshair, a legend, and a chart-linked data table, no
+  charting library dependency.
 
 If the SPARQL endpoint URL ever changes, override it without touching code:
 

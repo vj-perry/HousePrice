@@ -24,7 +24,6 @@ PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
 
 POSTCODE_RE = re.compile(r"^[A-Z]{1,2}\d[A-Z\d]?\s*\d[A-Z]{2}$", re.IGNORECASE)
 OUTCODE_RE = re.compile(r"^[A-Z]{1,2}\d[A-Z\d]?$", re.IGNORECASE)
-DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
 MAX_RESULTS = 3000
 REQUEST_TIMEOUT = 30
@@ -111,67 +110,29 @@ _OPTIONAL_FIELDS = """
 """
 
 
-def search_property_sales(postcode: str, house: str | None = None) -> list:
-    """All recorded sales for a postcode, optionally narrowed to one house/flat."""
-    postcode = postcode.strip().upper()
-    if not POSTCODE_RE.match(postcode):
-        raise LandRegistryError(f"'{postcode}' does not look like a valid UK postcode")
-
-    query = f"""
-    {PREFIXES}
-    SELECT {_SELECT_FIELDS}
-    WHERE {{
-      ?transx lrppi:propertyAddress ?addr ;
-              lrppi:pricePaid ?amount ;
-              lrppi:transactionDate ?date .
-      ?addr lrcommon:postcode ?postcode .
-      FILTER(?postcode = "{_escape_literal(postcode)}")
-      {_OPTIONAL_FIELDS}
-    }}
-    ORDER BY ?date
-    LIMIT {MAX_RESULTS}
+def search_sales(postcode: str, street: str | None = None) -> list:
+    """All recorded sales for a postcode (full or district), optionally
+    narrowed by street name. Returns the full recorded history — the Price
+    Paid dataset starts in January 1995 — up to the latest published data.
     """
+    postcode = postcode.strip().upper()
 
-    rows = [_row_from_binding(b) for b in _run_query(query)]
+    if POSTCODE_RE.match(postcode):
+        postcode_filter = f'FILTER(?postcode = "{_escape_literal(postcode)}")'
+    elif OUTCODE_RE.match(postcode):
+        postcode_filter = (
+            f'FILTER(STRSTARTS(STR(?postcode), "{_escape_literal(postcode)} "))'
+        )
+    else:
+        raise LandRegistryError(
+            f"'{postcode}' does not look like a UK postcode (e.g. 'SW1A 1AA') "
+            "or district (e.g. 'SW1A')"
+        )
 
-    if house:
-        needle = house.strip().lower()
-        rows = [r for r in rows if r["paon"] and needle in r["paon"].lower()]
-
-    return rows
-
-
-def search_area_sales(
-    area: str | None = None,
-    town: str | None = None,
-    date_from: str | None = None,
-    date_to: str | None = None,
-) -> list:
-    """Sales across a postcode area/district (e.g. 'SW1A') or a town, over time."""
-    if not area and not town:
-        raise LandRegistryError("Provide either a postcode area or a town")
-
-    filters = []
-
-    if area:
-        area = area.strip().upper()
-        if not OUTCODE_RE.match(area):
-            raise LandRegistryError(
-                f"'{area}' does not look like a valid UK postcode area/district (e.g. 'SW1A')"
-            )
-        filters.append(f'FILTER(STRSTARTS(STR(?postcode), "{_escape_literal(area)}"))')
-
-    if town:
-        filters.append(f'FILTER(LCASE(STR(?town)) = LCASE("{_escape_literal(town.strip())}"))')
-
-    for label, value in (("date_from", date_from), ("date_to", date_to)):
-        if value and not DATE_RE.match(value):
-            raise LandRegistryError(f"{label} must be in YYYY-MM-DD format")
-
-    if date_from:
-        filters.append(f'FILTER(?date >= "{date_from}"^^xsd:date)')
-    if date_to:
-        filters.append(f'FILTER(?date <= "{date_to}"^^xsd:date)')
+    street_filter = ""
+    if street:
+        needle = _escape_literal(street.strip())
+        street_filter = f'FILTER(CONTAINS(LCASE(STR(?street)), LCASE("{needle}")))'
 
     query = f"""
     {PREFIXES}
@@ -182,7 +143,8 @@ def search_area_sales(
               lrppi:transactionDate ?date .
       ?addr lrcommon:postcode ?postcode .
       {_OPTIONAL_FIELDS}
-      {' '.join(filters)}
+      {postcode_filter}
+      {street_filter}
     }}
     ORDER BY ?date
     LIMIT {MAX_RESULTS}
