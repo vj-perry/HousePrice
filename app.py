@@ -1,3 +1,5 @@
+import os
+
 from flask import Flask, jsonify, render_template, request
 
 import epc
@@ -66,4 +68,4 @@ def epc_lookup():
 
 
 if __name__ == "__main__":
-    app.run(debug=True)
+    app.run(debug=True, port=int(os.environ.get("PORT", "5000")))
