@@ -4,6 +4,8 @@ Docs: https://landregistry.data.gov.uk/app/doc/ppd/
 Query console (useful for double-checking query shape by hand):
 https://landregistry.data.gov.uk/qonsole
 """
+from __future__ import annotations
+
 import os
 import re
 
