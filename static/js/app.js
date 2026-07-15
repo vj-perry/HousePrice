@@ -39,9 +39,44 @@
   let geocodeCache = {};   // property key -> {lat, lng, precision} | null
   let geocodeFailed = false;
   let medianPrice = 0;
-  let roomsByProperty = {};
+  let epcByProperty = {};  // property key -> {rooms, floor_area}
   let zoomDomain = null;   // {x0, x1, y0, y1} in data units, null = fitted
   let isPanning = false;
+  let chartMode = "price"; // "price" | "sqm" (price per square metre)
+  let showTrend = true;
+
+  function floorAreaOf(s) {
+    const e = epcByProperty[propKey(s)];
+    return e && e.floor_area ? e.floor_area : null;
+  }
+
+  // The value plotted on the y-axis in the current chart mode.
+  function yValueOf(s) {
+    if (chartMode === "sqm") {
+      const area = floorAreaOf(s);
+      return area ? s.price / area : null;
+    }
+    return s.price;
+  }
+
+  function formatY(v) {
+    if (chartMode === "sqm") return "£" + Math.round(v).toLocaleString("en-GB");
+    return formatPrice(v);
+  }
+
+  const chartModeEl = document.getElementById("chart-mode");
+  chartModeEl.querySelectorAll("button").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      if (chartMode === btn.dataset.mode) return;
+      chartMode = btn.dataset.mode;
+      chartModeEl.querySelectorAll("button").forEach((b) => {
+        b.classList.toggle("is-active", b === btn);
+        b.setAttribute("aria-pressed", String(b === btn));
+      });
+      zoomDomain = null;
+      renderAll();
+    });
+  });
 
   function propKey(s) {
     return [s.saon, s.paon, s.street, s.postcode].map((v) => v || "").join("|");
@@ -97,11 +132,18 @@
       activeTypes = new Set(typesPresent(sales));
       geocodeCache = {};
       geocodeFailed = false;
-      roomsByProperty = {};
+      epcByProperty = {};
+      chartMode = "price";
+      chartModeEl.hidden = true;
+      chartModeEl.querySelectorAll("button").forEach((b) => {
+        const active = b.dataset.mode === "price";
+        b.classList.toggle("is-active", active);
+        b.setAttribute("aria-pressed", String(active));
+      });
 
       resultCard.hidden = false;
       renderAll();
-      loadRooms();
+      loadEpc();
       if (!mapSection.hidden) refreshMap();
     } catch (err) {
       setStatus(err.message || "Something went wrong.", true);
@@ -135,27 +177,36 @@
     return allSales.filter((s) => activeTypes.has(typeKey(s)));
   }
 
-  // Points plotted on the chart: legend-filtered AND outliers excluded.
+  // Points plotted on the chart: legend-filtered, outliers excluded, and in
+  // £/m² mode only sales with a known floor area.
   function chartSales() {
-    return tableSales().filter((s) => !s._outlier);
+    return tableSales().filter((s) => !s._outlier && yValueOf(s) != null);
   }
 
   function renderAll() {
     const plotted = chartSales();
     const shown = tableSales();
-    const outliers = shown.length - plotted.length;
+    const outliers = shown.filter((s) => s._outlier).length;
+    const noArea = chartMode === "sqm"
+      ? shown.filter((s) => !s._outlier && yValueOf(s) == null).length
+      : 0;
 
     resultTitle.textContent =
       resultLabel + " — " + plotted.length + (plotted.length === 1 ? " sale" : " sales") +
-      (shown.length !== allSales.length || outliers
-        ? " of " + allSales.length : "");
+      (plotted.length !== allSales.length ? " of " + allSales.length : "");
 
-    outlierNote.hidden = outliers === 0;
+    const noteParts = [];
     if (outliers > 0) {
-      outlierNote.textContent =
+      noteParts.push(
         outliers + (outliers === 1 ? " sale" : " sales") + " above 3× the median price (" +
-        formatPrice(medianPrice) + " median) excluded from the chart — greyed out in the table below.";
+        formatPrice(medianPrice) + " median) excluded from the chart — greyed out in the table below");
     }
+    if (noArea > 0) {
+      noteParts.push(
+        noArea + (noArea === 1 ? " sale" : " sales") + " without EPC floor area hidden in the £/m² view");
+    }
+    outlierNote.hidden = noteParts.length === 0;
+    outlierNote.textContent = noteParts.join(". ") + (noteParts.length ? "." : "");
 
     renderLegend();
     renderTable(shown);
@@ -196,6 +247,40 @@
       item.addEventListener("click", () => {
         if (activeTypes.has(type)) activeTypes.delete(type);
         else activeTypes.add(type);
+        renderAll();
+      });
+      legendEl.appendChild(item);
+    }
+
+    // Trend-line toggle rides in the legend when there's enough history.
+    if (trendPoints(chartSales()).length) {
+      const item = document.createElement("button");
+      item.type = "button";
+      item.className = "legend-item";
+      if (!showTrend) item.classList.add("is-off");
+      item.setAttribute("aria-pressed", String(showTrend));
+      item.title = (showTrend ? "Hide" : "Show") + " the 12-month rolling median line";
+
+      const swatch = document.createElementNS(NS, "svg");
+      swatch.setAttribute("width", 14);
+      swatch.setAttribute("height", 14);
+      swatch.setAttribute("viewBox", "0 0 14 14");
+      const lineKey = document.createElementNS(NS, "line");
+      lineKey.setAttribute("x1", 1);
+      lineKey.setAttribute("y1", 7);
+      lineKey.setAttribute("x2", 13);
+      lineKey.setAttribute("y2", 7);
+      lineKey.setAttribute("stroke", cssVar("--text-secondary"));
+      lineKey.setAttribute("stroke-width", "2");
+      lineKey.setAttribute("stroke-linecap", "round");
+      swatch.appendChild(lineKey);
+
+      const label = document.createElement("span");
+      label.textContent = "12-mo median";
+
+      item.append(swatch, label);
+      item.addEventListener("click", () => {
+        showTrend = !showTrend;
         renderAll();
       });
       legendEl.appendChild(item);
@@ -254,10 +339,10 @@
   function fullDomainFor(sales) {
     if (!sales.length) return null;
     const dates = sales.map((s) => new Date(s.date).getTime());
-    const prices = sales.map((s) => s.price);
+    const values = sales.map(yValueOf);
     const xMin = Math.min(...dates);
     const xMax = Math.max(...dates);
-    const yMaxRaw = Math.max(...prices);
+    const yMaxRaw = Math.max(...values);
     const ticks = niceTicks(0, yMaxRaw, 5);
     return {
       x0: xMin,
@@ -265,6 +350,24 @@
       y0: 0,
       y1: ticks[ticks.length - 1],
     };
+  }
+
+  // ---- 12-month rolling median trend ----
+
+  function trendPoints(sales) {
+    if (sales.length < 12) return [];
+    const pts = sales
+      .map((s) => ({ t: new Date(s.date).getTime(), v: yValueOf(s) }))
+      .sort((a, b) => a.t - b.t);
+    const span = pts[pts.length - 1].t - pts[0].t;
+    const MONTH = 30.44 * 86400000;
+    if (span < 24 * MONTH) return [];
+    const out = [];
+    for (let t = pts[0].t; t <= pts[pts.length - 1].t + 1; t += MONTH) {
+      const inWindow = pts.filter((p) => Math.abs(p.t - t) <= 6 * MONTH).map((p) => p.v);
+      if (inWindow.length >= 5) out.push({ t, v: median(inWindow) });
+    }
+    return out.length >= 2 ? out : [];
   }
 
   function clampDomain(d, full) {
@@ -384,7 +487,7 @@
       label.setAttribute("dominant-baseline", "middle");
       label.setAttribute("fill", mutedColor);
       label.setAttribute("font-size", "12");
-      label.textContent = formatPrice(tick);
+      label.textContent = formatY(tick);
       root.appendChild(label);
     }
 
@@ -414,12 +517,30 @@
     marksGroup.setAttribute("clip-path", "url(#plot-clip)");
     root.appendChild(marksGroup);
 
+    // Rolling-median trend line sits under the marks.
+    if (showTrend) {
+      const trend = trendPoints(sales);
+      if (trend.length) {
+        const poly = document.createElementNS(NS, "polyline");
+        poly.setAttribute("points",
+          trend.map((p) => `${xScale(p.t)},${yScale(p.v)}`).join(" "));
+        poly.setAttribute("fill", "none");
+        poly.setAttribute("stroke", cssVar("--text-secondary"));
+        poly.setAttribute("stroke-width", "2");
+        poly.setAttribute("stroke-linejoin", "round");
+        poly.setAttribute("stroke-linecap", "round");
+        poly.setAttribute("opacity", "0.75");
+        marksGroup.appendChild(poly);
+      }
+    }
+
     const hitTargets = [];
     // Count only points inside the current view when deciding whether
     // per-point labels fit — zooming in brings labels back.
     const inView = sales.filter((s) => {
       const t = new Date(s.date).getTime();
-      return t >= x0 && t <= x1 && s.price >= y0 && s.price <= y1;
+      const v = yValueOf(s);
+      return t >= x0 && t <= x1 && v >= y0 && v <= y1;
     });
     const drawLabels = inView.length <= LABEL_LIMIT;
     const xPad = (x1 - x0) * 0.02;
@@ -427,14 +548,15 @@
 
     for (const sale of sales) {
       const t = new Date(sale.date).getTime();
+      const v = yValueOf(sale);
       // Skip marks well outside the view; the clip hides near-edge ones.
-      if (t < x0 - xPad || t > x1 + xPad || sale.price < y0 - yPad || sale.price > y1 + yPad) {
+      if (t < x0 - xPad || t > x1 + xPad || v < y0 - yPad || v > y1 + yPad) {
         continue;
       }
       const st = styleFor(typeKey(sale));
       const color = cssVar(st.colorVar);
       const cx = xScale(t);
-      const cy = yScale(sale.price);
+      const cy = yScale(v);
 
       const mark = makeMarker(st.shape, cx, cy, 4.5, color, surfaceColor);
       marksGroup.appendChild(mark);
@@ -643,6 +765,14 @@
       typeRow.textContent = sale.property_type;
       tooltipEl.append(typeRow);
     }
+    const area = floorAreaOf(sale);
+    if (area) {
+      const sqmRow = document.createElement("div");
+      sqmRow.textContent =
+        "£" + Math.round(sale.price / area).toLocaleString("en-GB") + "/m² · " +
+        Math.round(area) + " m²";
+      tooltipEl.append(sqmRow);
+    }
 
     tooltipEl.hidden = false;
     tooltipEl.style.left = (margin.left + hit.cx) + "px";
@@ -672,12 +802,19 @@
       const tdType = document.createElement("td");
       tdType.textContent = s.property_type || "";
 
+      const epcEntry = epcByProperty[propKey(s)];
+
       const tdRooms = document.createElement("td");
       tdRooms.className = "num rooms";
-      const rooms = roomsByProperty[propKey(s)];
-      tdRooms.textContent = rooms != null ? String(rooms) : "—";
+      tdRooms.textContent = epcEntry && epcEntry.rooms != null ? String(epcEntry.rooms) : "—";
 
-      tr.append(tdDate, tdPrice, tdAddr, tdType, tdRooms);
+      const tdSqm = document.createElement("td");
+      tdSqm.className = "num sqm";
+      tdSqm.textContent = epcEntry && epcEntry.floor_area
+        ? "£" + Math.round(s.price / epcEntry.floor_area).toLocaleString("en-GB")
+        : "—";
+
+      tr.append(tdDate, tdPrice, tdAddr, tdType, tdRooms, tdSqm);
       tableBody.appendChild(tr);
     }
   }
@@ -702,43 +839,42 @@
     return [...seen.values()];
   }
 
-  async function loadRooms() {
+  async function loadEpc() {
     try {
-      const resp = await fetch("/api/rooms", {
+      const resp = await fetch("/api/epc", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ properties: uniqueProperties() }),
       });
       const body = await resp.json();
-      if (!resp.ok) throw new Error(body.error || "Rooms lookup failed");
+      if (!resp.ok) throw new Error(body.error || "EPC lookup failed");
 
       if (!body.configured) {
         tableNote.hidden = false;
         tableNote.textContent =
-          "Rooms: no open dataset publishes bedroom counts; the nearest public source is the " +
-          "EPC register's habitable-rooms figure (free API key from epc.opendatacommunities.org — " +
-          "set EPC_AUTH to enable).";
+          "Rooms & £/m² come from the EPC register (habitable rooms and internal floor area; " +
+          "no open dataset publishes bedroom counts). Free API key from epc.opendatacommunities.org — " +
+          "set EPC_AUTH to enable.";
         return;
       }
 
-      roomsByProperty = body.rooms || {};
-      const matched = Object.keys(roomsByProperty).length;
+      epcByProperty = body.properties || {};
+      const matched = Object.keys(epcByProperty).length;
+      const anyArea = Object.values(epcByProperty).some((e) => e.floor_area);
+      chartModeEl.hidden = !anyArea;
+
       tableNote.hidden = false;
       tableNote.textContent =
-        "Rooms = habitable rooms from the property's most recent EPC (bedrooms + reception rooms; " +
-        "no open dataset publishes bedroom counts alone)" +
+        "Rooms = habitable rooms and £/m² = price ÷ internal floor area, both from the property's " +
+        "most recent EPC" +
         (matched ? "" : " — no EPC matches found for this search") + ".";
-      // fill in the cells without a full re-render
-      for (const tr of tableBody.querySelectorAll("tr")) {
-        const sale = allSales[Number(tr.dataset.id)];
-        if (!sale) continue;
-        const rooms = roomsByProperty[propKey(sale)];
-        const cell = tr.querySelector("td.rooms");
-        if (cell && rooms != null) cell.textContent = String(rooms);
-      }
+
+      // Re-render so the table cells, tooltip data, and £/m² toggle pick up
+      // the EPC values.
+      renderAll();
     } catch (err) {
       tableNote.hidden = false;
-      tableNote.textContent = "Rooms lookup unavailable: " + (err.message || "unknown error");
+      tableNote.textContent = "EPC lookup unavailable: " + (err.message || "unknown error");
     }
   }
 

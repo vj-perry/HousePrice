@@ -59,10 +59,12 @@ def _rows_for_postcode(postcode: str) -> list:
     return rows
 
 
-def rooms_for_properties(properties: list) -> dict:
-    """Map property id -> habitable-room count (int) from the most recent
-    EPC whose address matches the property's PAON (and SAON if present).
-    Properties without a confident match are absent from the result."""
+def epc_for_properties(properties: list) -> dict:
+    """Map property id -> {'rooms': int|None, 'floor_area': float|None}
+    from the most recent EPC whose address matches the property's PAON
+    (and SAON if present). floor_area is the certificate's total internal
+    floor area in square metres. Properties without a confident match are
+    absent from the result."""
     if not configured():
         return {}
 
@@ -72,7 +74,7 @@ def rooms_for_properties(properties: list) -> dict:
         if pc:
             by_postcode.setdefault(pc, []).append(p)
 
-    rooms = {}
+    results = {}
     for pc, plist in by_postcode.items():
         rows = _rows_for_postcode(pc)
         if not rows:
@@ -91,13 +93,23 @@ def rooms_for_properties(properties: list) -> dict:
                     continue
                 if saon and saon not in addr:
                     continue
-                count = row.get("number-habitable-rooms")
                 lodged = str(row.get("lodgement-date") or "")
-                if count and (best is None or lodged > best[0]):
-                    best = (lodged, count)
-            if best:
-                try:
-                    rooms[p["id"]] = int(float(best[1]))
-                except (TypeError, ValueError):
-                    pass
-    return rooms
+                if best is None or lodged > best[0]:
+                    best = (lodged, row)
+            if not best:
+                continue
+            row = best[1]
+            entry = {"rooms": None, "floor_area": None}
+            try:
+                entry["rooms"] = int(float(row.get("number-habitable-rooms")))
+            except (TypeError, ValueError):
+                pass
+            try:
+                area = float(row.get("total-floor-area"))
+                if area > 0:
+                    entry["floor_area"] = area
+            except (TypeError, ValueError):
+                pass
+            if entry["rooms"] is not None or entry["floor_area"] is not None:
+                results[p["id"]] = entry
+    return results

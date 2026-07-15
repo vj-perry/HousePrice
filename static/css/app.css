@@ -177,13 +177,44 @@ body {
   padding: 0;
 }
 
+.chart-controls {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+
+.chart-mode {
+  display: flex;
+  flex-shrink: 0;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  overflow: hidden;
+}
+.chart-mode button {
+  border: none;
+  background: var(--surface-1);
+  color: var(--text-secondary);
+  font-size: 12px;
+  padding: 4px 10px;
+  cursor: pointer;
+}
+.chart-mode button.is-active {
+  background: var(--series-1);
+  color: #fff;
+}
+.chart-mode button:focus-visible {
+  outline: 2px solid var(--series-1);
+  outline-offset: -2px;
+}
+
 .legend {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
   font-size: 12px;
   color: var(--text-secondary);
-  margin-bottom: 8px;
 }
 .legend-item {
   display: flex;

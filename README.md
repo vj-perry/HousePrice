@@ -26,10 +26,14 @@ January 1995) up to the latest published data.
   <= 25 unique properties (its usage policy allows ~1 lookup/second), with
   postcodes.io postcode centroids (accurate to a few doors) as the fallback;
   the note under the map states which precision each search got.
-- Optional Rooms column: no open dataset publishes bedroom counts, so the
-  nearest public source is the EPC register's habitable-rooms figure.
-  Register free at https://epc.opendatacommunities.org/ and set
-  EPC_AUTH="your-email:your-api-key" before starting the app to enable it.
+- 12-month rolling median trend line on the chart (toggleable from the
+  legend; shown when there's at least two years of history).
+- Optional EPC-powered extras (register free at
+  https://epc.opendatacommunities.org/ and set
+  EPC_AUTH="your-email:your-api-key" before starting the app):
+  a Rooms column (habitable rooms — no open dataset publishes bedroom
+  counts), a £/m² column (price ÷ EPC internal floor area), £/m² in the
+  tooltip, and a Price / £-per-m² chart mode toggle.
 
 Data is fetched live from Land Registry's public SPARQL endpoint — nothing is
 downloaded or stored locally.
@@ -54,7 +58,7 @@ Then open http://127.0.0.1:5000.
 - `app.py` exposes `/api/sales?q=…` (free-text search; `land_registry.py`
   parses out postcode/street/house number), `POST /api/geocode`
   (Nominatim house-level + postcodes.io fallback, see `geocode.py`), and
-  `POST /api/rooms` (EPC habitable rooms, see `epc.py`).
+  `POST /api/epc` (EPC habitable rooms + floor area, see `epc.py`).
 - The frontend (`templates/index.html`, `static/js/app.js`) is plain
   HTML/CSS/JS — a hand-rolled SVG scatter chart with per-type marker shapes,
   hover tooltips, a crosshair, a legend, and a chart-linked data table, no

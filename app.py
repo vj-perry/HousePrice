@@ -51,18 +51,18 @@ def geocode():
     return jsonify({"coords": coords})
 
 
-@app.post("/api/rooms")
-def rooms():
+@app.post("/api/epc")
+def epc_lookup():
     if not epc.configured():
-        return jsonify({"configured": False, "rooms": {}})
+        return jsonify({"configured": False, "properties": {}})
     properties = _property_list(request.get_json(silent=True))
     if properties is None:
         return jsonify({"error": "properties (non-empty list) is required"}), 400
     try:
-        result = epc.rooms_for_properties(properties)
+        result = epc.epc_for_properties(properties)
     except epc.EpcError as exc:
         return jsonify({"error": str(exc)}), 502
-    return jsonify({"configured": True, "rooms": result})
+    return jsonify({"configured": True, "properties": result})
 
 
 if __name__ == "__main__":

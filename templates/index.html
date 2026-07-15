@@ -29,7 +29,13 @@
         <h2 id="result-title"></h2>
         <button type="button" id="map-toggle" class="link-btn">Show map</button>
       </div>
-      <div id="legend" class="legend" aria-hidden="true"></div>
+      <div class="chart-controls">
+        <div id="legend" class="legend" aria-hidden="true"></div>
+        <div id="chart-mode" class="chart-mode" role="group" aria-label="Chart value" hidden>
+          <button type="button" data-mode="price" class="is-active" aria-pressed="true">Price</button>
+          <button type="button" data-mode="sqm" aria-pressed="false">&pound;/m&sup2;</button>
+        </div>
+      </div>
       <div class="chart-wrap">
         <div id="chart-mount"></div>
         <div class="chart-zoom" role="group" aria-label="Chart zoom">
@@ -47,7 +53,7 @@
       <div class="table-wrap">
         <table id="data-table">
           <thead>
-            <tr><th>Date</th><th>Price</th><th>Address</th><th>Type</th><th>Rooms</th></tr>
+            <tr><th>Date</th><th>Price</th><th>Address</th><th>Type</th><th>Rooms</th><th>&pound;/m&sup2;</th></tr>
           </thead>
           <tbody></tbody>
         </table>
