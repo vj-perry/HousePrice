@@ -122,7 +122,7 @@
       sales.forEach((s, i) => { s._id = i; });
 
       medianPrice = median(sales.map((s) => s.price));
-      const outlierThreshold = medianPrice * 3;
+      const outlierThreshold = medianPrice * 5;
       sales.forEach((s) => { s._outlier = s.price > outlierThreshold; });
 
       allSales = sales;
@@ -198,7 +198,7 @@
     const noteParts = [];
     if (outliers > 0) {
       noteParts.push(
-        outliers + (outliers === 1 ? " sale" : " sales") + " above 3× the median price (" +
+        outliers + (outliers === 1 ? " sale" : " sales") + " above 5× the median price (" +
         formatPrice(medianPrice) + " median) excluded from the chart — greyed out in the table below");
     }
     if (noArea > 0) {
@@ -786,7 +786,7 @@
       tr.dataset.id = s._id;
       if (s._outlier) {
         tr.classList.add("is-outlier");
-        tr.title = "Above 3× the median price — not plotted on the chart";
+        tr.title = "Above 5× the median price — not plotted on the chart";
       }
 
       const tdDate = document.createElement("td");

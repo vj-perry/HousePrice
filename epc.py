@@ -32,9 +32,21 @@ def configured() -> bool:
     return bool(os.environ.get("EPC_AUTH"))
 
 
-def _auth_header():
-    token = base64.b64encode(os.environ["EPC_AUTH"].encode()).decode()
-    return {"Accept": "application/json", "Authorization": f"Basic {token}"}
+def _credentials():
+    raw = os.environ["EPC_AUTH"]
+    if ":" not in raw:
+        raise EpcError(
+            "EPC_AUTH/epc_auth.txt must be 'your-email:your-api-key' — no colon found"
+        )
+    email, key = raw.split(":", 1)
+    return email.strip(), key.strip()
+
+
+BAD_CREDENTIALS_HINT = (
+    "Check that the email before the colon in epc_auth.txt is exactly the "
+    "address you registered with at epc.opendatacommunities.org, and that the "
+    "key matches the one shown on your account page."
+)
 
 
 def _rows_for_postcode(postcode: str) -> list:
@@ -44,24 +56,36 @@ def _rows_for_postcode(postcode: str) -> list:
         resp = requests.get(
             EPC_URL,
             params={"postcode": postcode, "size": PAGE_SIZE},
-            headers=_auth_header(),
+            headers={"Accept": "application/json"},
+            auth=_credentials(),
             timeout=REQUEST_TIMEOUT,
         )
-        if resp.status_code == 401:
+        if resp.status_code in (401, 403):
             raise EpcError(
-                "The EPC API rejected the credentials (HTTP 401). Check that the "
-                "email before the colon in epc_auth.txt is exactly the address you "
-                "registered with at epc.opendatacommunities.org, and the key matches "
-                "the one on your account page."
+                f"The EPC API rejected the credentials (HTTP {resp.status_code}). "
+                + BAD_CREDENTIALS_HINT
             )
         if resp.status_code >= 400:
             snippet = " ".join((resp.text or "")[:200].split())
             raise EpcError(f"EPC register returned HTTP {resp.status_code}: {snippet}")
-        rows = (resp.json() or {}).get("rows", []) if resp.text.strip() else []
+        body = (resp.text or "").strip()
+        if not body:
+            rows = []
+        elif body[0] in "<":
+            # An HTML page with a 200 status is the register's sign-in page —
+            # in practice this means the email/key pair wasn't accepted.
+            raise EpcError(
+                "The EPC register returned its sign-in page instead of data, "
+                "which means the credentials were not accepted. " + BAD_CREDENTIALS_HINT
+            )
+        else:
+            rows = (resp.json() or {}).get("rows", [])
     except requests.RequestException as exc:
         raise EpcError(f"Could not reach the EPC register: {exc}") from exc
     except ValueError as exc:
-        raise EpcError("EPC register returned an unreadable response") from exc
+        raise EpcError(
+            "EPC register returned an unreadable response (not JSON). " + BAD_CREDENTIALS_HINT
+        ) from exc
     _postcode_rows_cache[postcode] = rows
     return rows
 

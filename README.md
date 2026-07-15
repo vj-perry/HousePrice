@@ -19,7 +19,7 @@ January 1995) up to the latest published data.
   all filter together.
 - Linked table below the chart — hovering a point highlights its row and
   every other recorded sale of the same property (chart and table).
-- Sales above 3x the median price are excluded from the chart (they would
+- Sales above 5x the median price are excluded from the chart (they would
   squash the y-axis) and greyed out in the table.
 - Toggleable map (Leaflet, vendored locally; OpenStreetMap tiles) plotting
   each property: house-level positions from OSM Nominatim when a search has
