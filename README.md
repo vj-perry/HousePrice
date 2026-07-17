@@ -29,7 +29,7 @@ January 1995) up to the latest published data.
 - 12-month rolling median trend line on the chart (toggleable from the
   legend; shown when there's at least two years of history).
 - Optional EPC-powered extras (register free at
-  https://epc.opendatacommunities.org/ and set
+  https://get-energy-performance-data.communities.gov.uk/ and set
   EPC_AUTH="your-email:your-api-key" before starting the app):
   a Rooms column (habitable rooms — no open dataset publishes bedroom
   counts), a £/m² column (price ÷ EPC internal floor area), £/m² in the

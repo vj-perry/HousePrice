@@ -853,7 +853,7 @@
         tableNote.hidden = false;
         tableNote.textContent =
           "Rooms & £/m² come from the EPC register (habitable rooms and internal floor area; " +
-          "no open dataset publishes bedroom counts). Free API key from epc.opendatacommunities.org — " +
+          "no open dataset publishes bedroom counts). Free API key from get-energy-performance-data.communities.gov.uk — " +
           "set EPC_AUTH to enable.";
         return;
       }

@@ -3,22 +3,33 @@
 Bedroom counts are not published in any open dataset. The closest openly
 available figure is the EPC register's *habitable rooms* count (bedrooms +
 living/dining rooms, excluding kitchens/bathrooms). The register's API is
-free but requires registration: https://epc.opendatacommunities.org/
+free but requires registration.
+
+The register moved home in May 2026: epc.opendatacommunities.org was
+retired and replaced by get-energy-performance-data.communities.gov.uk
+(the old domain 301-redirects to the new one, dropping the API path).
+We try the new domain first and keep the old as a fallback; if the new
+service ever changes its path, EPC_API_URL overrides everything.
 
 Set the EPC_AUTH environment variable to "your-email:your-api-key" to
 enable the lookup; without it the app simply leaves the column blank.
 """
 from __future__ import annotations
 
-import base64
 import os
 import re
 
 import requests
 
-EPC_URL = "https://epc.opendatacommunities.org/api/v1/domestic/search"
+_ENV_URL = os.environ.get("EPC_API_URL")
+EPC_URLS = [_ENV_URL] if _ENV_URL else [
+    "https://get-energy-performance-data.communities.gov.uk/api/v1/domestic/search",
+    "https://epc.opendatacommunities.org/api/v1/domestic/search",
+]
 REQUEST_TIMEOUT = 30
 PAGE_SIZE = 200
+
+_working_url = [None]  # first candidate that returned JSON, remembered
 
 
 class EpcError(Exception):
@@ -44,48 +55,70 @@ def _credentials():
 
 BAD_CREDENTIALS_HINT = (
     "Check that the email before the colon in epc_auth.txt is exactly the "
-    "address you registered with at epc.opendatacommunities.org, and that the "
+    "address you registered with at the EPC data service "
+    "(get-energy-performance-data.communities.gov.uk), and that the "
     "key matches the one shown on your account page."
 )
 
 
-def _rows_for_postcode(postcode: str) -> list:
-    if postcode in _postcode_rows_cache:
-        return _postcode_rows_cache[postcode]
+def _try_url(url: str, postcode: str):
+    """One request against one candidate endpoint. Returns a row list, or
+    raises EpcError with the reason this candidate failed."""
     try:
         resp = requests.get(
-            EPC_URL,
+            url,
             params={"postcode": postcode, "size": PAGE_SIZE},
             headers={"Accept": "application/json"},
             auth=_credentials(),
             timeout=REQUEST_TIMEOUT,
         )
-        if resp.status_code in (401, 403):
-            raise EpcError(
-                f"The EPC API rejected the credentials (HTTP {resp.status_code}). "
-                + BAD_CREDENTIALS_HINT
-            )
-        if resp.status_code >= 400:
-            snippet = " ".join((resp.text or "")[:200].split())
-            raise EpcError(f"EPC register returned HTTP {resp.status_code}: {snippet}")
-        body = (resp.text or "").strip()
-        if not body:
-            rows = []
-        elif body[0] in "<":
-            # An HTML page with a 200 status is the register's sign-in page —
-            # in practice this means the email/key pair wasn't accepted.
-            raise EpcError(
-                "The EPC register returned its sign-in page instead of data, "
-                "which means the credentials were not accepted. " + BAD_CREDENTIALS_HINT
-            )
-        else:
-            rows = (resp.json() or {}).get("rows", [])
     except requests.RequestException as exc:
-        raise EpcError(f"Could not reach the EPC register: {exc}") from exc
-    except ValueError as exc:
+        raise EpcError(f"could not reach {url}: {exc}") from exc
+
+    if resp.status_code in (401, 403):
         raise EpcError(
-            "EPC register returned an unreadable response (not JSON). " + BAD_CREDENTIALS_HINT
-        ) from exc
+            f"the EPC API rejected the credentials (HTTP {resp.status_code}). "
+            + BAD_CREDENTIALS_HINT
+        )
+    if resp.status_code >= 400:
+        snippet = " ".join((resp.text or "")[:200].split())
+        raise EpcError(f"{url} returned HTTP {resp.status_code}: {snippet}")
+
+    body = (resp.text or "").strip()
+    if not body:
+        return []
+    if body[0] == "<":
+        # HTML with a 2xx status: either the retired domain's redirect
+        # landed on a web page, or a sign-in page for bad credentials.
+        raise EpcError(f"{url} returned a web page instead of JSON data")
+    try:
+        return (resp.json() or {}).get("rows", [])
+    except ValueError as exc:
+        raise EpcError(f"{url} returned an unreadable (non-JSON) response") from exc
+
+
+def _rows_for_postcode(postcode: str) -> list:
+    if postcode in _postcode_rows_cache:
+        return _postcode_rows_cache[postcode]
+
+    candidates = [_working_url[0]] if _working_url[0] else EPC_URLS
+    failures = []
+    rows = None
+    for url in candidates:
+        try:
+            rows = _try_url(url, postcode)
+            _working_url[0] = url
+            break
+        except EpcError as exc:
+            failures.append(str(exc))
+
+    if rows is None:
+        raise EpcError(
+            "All EPC endpoints failed — " + " | ".join(failures) +
+            " (if the register's API has moved again, set EPC_API_URL to the new "
+            "search endpoint)"
+        )
+
     _postcode_rows_cache[postcode] = rows
     return rows
 
