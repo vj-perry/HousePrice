@@ -30,7 +30,8 @@ January 1995) up to the latest published data.
   legend; shown when there's at least two years of history).
 - Optional EPC-powered extras (register free at
   https://get-energy-performance-data.communities.gov.uk/ and set
-  EPC_AUTH="your-email:your-api-key" before starting the app):
+  EPC_AUTH to the bearer token from your My Account page before starting
+  the app; a legacy "email:token" value also works):
   a Rooms column (habitable rooms — no open dataset publishes bedroom
   counts), a £/m² column (price ÷ EPC internal floor area), £/m² in the
   tooltip, and a Price / £-per-m² chart mode toggle.
