@@ -158,7 +158,8 @@ _ADDR_KEYS = {"addressline1", "addressline2", "addressline3", "addressline4",
               "address1", "address2", "address3", "address"}
 _CERT_NO_KEYS = {"certificatenumber", "rrn", "lmkkey"}
 _DATE_KEYS = {"registrationdate", "lodgementdate"}
-_ROOMS_KEYS = {"numberhabitablerooms", "habitablerooms", "numberofhabitablerooms"}
+_ROOMS_KEYS = {"habitableroomcount", "numberhabitablerooms", "habitablerooms",
+               "numberofhabitablerooms"}
 _AREA_KEYS = {"totalfloorarea", "floorarea"}
 
 
