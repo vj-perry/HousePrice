@@ -145,10 +145,35 @@ def _extract_list(payload):
     return []
 
 
+_page_param = [None]  # which page-size parameter the API accepts, once learned
+
+
 def _rows_for_postcode(postcode: str) -> list:
     if postcode in _postcode_rows_cache:
         return _postcode_rows_cache[postcode]
-    payload = _get(SEARCH_URL, {"postcode": postcode})
+
+    # Ask for the maximum page in one go — the docs name the parameter
+    # inconsistently ("page_size" in examples, "page" in the table), so
+    # learn which one the API accepts; fall back to the default page size
+    # rather than failing if both are rejected.
+    payload = None
+    if _page_param[0] is not None:
+        candidates = [_page_param[0], None]
+    else:
+        candidates = ["page_size", "page", None]
+    for param in candidates:
+        params = {"postcode": postcode}
+        if param:
+            params[param] = 5000
+        try:
+            payload = _get(SEARCH_URL, params)
+            _page_param[0] = param
+            break
+        except EpcError as exc:
+            if "HTTP 400" in str(exc):
+                continue
+            raise
+
     rows = _extract_list(payload)
     _postcode_rows_cache[postcode] = rows
     return rows
@@ -218,6 +243,7 @@ def epc_for_properties(properties: list) -> dict:
         for p in plist:
             paon = (p.get("paon") or "").strip().lower()
             saon = (p.get("saon") or "").strip().lower()
+            street = (p.get("street") or "").strip().lower()
             if not paon:
                 continue
             best = None
@@ -226,6 +252,10 @@ def epc_for_properties(properties: list) -> dict:
                 if not re.search(rf"(?<![\w]){re.escape(paon)}(?![\w])", addr):
                     continue
                 if saon and saon not in addr:
+                    continue
+                # A postcode can span two streets; when we know the street,
+                # require it so "20 X Road" never matches "20 Y Road".
+                if street and street not in addr.replace(",", ""):
                     continue
                 cert_no = _find_value(row, _CERT_NO_KEYS)
                 if not cert_no:
