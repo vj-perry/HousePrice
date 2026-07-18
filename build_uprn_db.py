@@ -20,7 +20,6 @@ import io
 import os
 import sqlite3
 import sys
-import tempfile
 import zipfile
 
 import requests
@@ -78,8 +77,10 @@ def build_db(zip_path):
         name = csv_names[0]
         print(f"Loading {name} into {DB_PATH} ...")
         with zf.open(name) as raw:
-            reader = csv.reader(io.TextIOWrapper(raw, encoding="utf-8", newline=""))
-            header = [h.strip().upper() for h in next(reader)]
+            # utf-8-sig strips the byte-order mark OS ships at the start
+            # of the file (it otherwise corrupts the first column name)
+            reader = csv.reader(io.TextIOWrapper(raw, encoding="utf-8-sig", newline=""))
+            header = [h.strip().lstrip("﻿").upper() for h in next(reader)]
             try:
                 i_uprn = header.index("UPRN")
                 i_lat = header.index("LATITUDE")
@@ -121,14 +122,16 @@ def main():
         build_db(zip_path)
         return
 
-    with tempfile.NamedTemporaryFile(suffix=".zip", delete=False) as tmp:
-        tmp_zip = tmp.name
-    try:
-        download_zip(tmp_zip)
-        build_db(tmp_zip)
-    finally:
-        if os.path.exists(tmp_zip):
-            os.remove(tmp_zip)
+    # Keep the download next to the database so a failed build never
+    # costs a re-download; it is only removed after a successful build.
+    os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
+    kept_zip = os.path.join(os.path.dirname(DB_PATH), "os_open_uprn_download.zip")
+    if os.path.exists(kept_zip):
+        print(f"Reusing previously downloaded {kept_zip}")
+    else:
+        download_zip(kept_zip)
+    build_db(kept_zip)
+    os.remove(kept_zip)
 
 
 if __name__ == "__main__":
