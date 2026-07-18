@@ -108,25 +108,28 @@ def _norm_key(key: str) -> str:
     return re.sub(r"[^a-z0-9]", "", str(key).lower())
 
 
-def _find_value(obj, targets, _depth=0):
-    """Depth-first search of nested dicts/lists for the first key whose
-    normalised form is in `targets`. Tolerates the API using camelCase,
-    snake_case, or extra nesting."""
-    if _depth > 6:
-        return None
-    if isinstance(obj, dict):
-        for key, value in obj.items():
-            if _norm_key(key) in targets and value not in (None, ""):
-                return value
-        for value in obj.values():
-            found = _find_value(value, targets, _depth + 1)
-            if found is not None:
-                return found
-    elif isinstance(obj, list):
-        for item in obj:
-            found = _find_value(item, targets, _depth + 1)
-            if found is not None:
-                return found
+def _find_value(obj, targets):
+    """Breadth-first search of nested dicts/lists for the first key whose
+    normalised form is in `targets`. Tolerates camelCase, snake_case, and
+    extra nesting. Breadth-first matters: certificates carry per-storey
+    total_floor_area entries nested deeper than the whole-property figure,
+    and the shallowest occurrence is the one we want."""
+    queue = [(obj, 0)]
+    index = 0
+    while index < len(queue):
+        current, depth = queue[index]
+        index += 1
+        if depth > 6:
+            continue
+        if isinstance(current, dict):
+            for key, value in current.items():
+                if _norm_key(key) in targets and value not in (None, ""):
+                    return value
+            for value in current.values():
+                queue.append((value, depth + 1))
+        elif isinstance(current, list):
+            for item in current:
+                queue.append((item, depth + 1))
     return None
 
 
