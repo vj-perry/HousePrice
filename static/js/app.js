@@ -44,6 +44,8 @@
   let isPanning = false;
   let chartMode = "price"; // "price" | "sqm" (price per square metre)
   let showTrend = true;
+  let epcLoadPromise = null;
+  let uprnDbAvailable = null;  // learned from /api/geocode
 
   function floorAreaOf(s) {
     const e = epcByProperty[propKey(s)];
@@ -143,7 +145,7 @@
 
       resultCard.hidden = false;
       renderAll();
-      loadEpc();
+      epcLoadPromise = loadEpc();
       if (!mapSection.hidden) refreshMap();
     } catch (err) {
       setStatus(err.message || "Something went wrong.", true);
@@ -814,7 +816,11 @@
         ? "£" + Math.round(s.price / epcEntry.floor_area).toLocaleString("en-GB")
         : "—";
 
-      tr.append(tdDate, tdPrice, tdAddr, tdType, tdRooms, tdSqm);
+      const tdRating = document.createElement("td");
+      tdRating.className = "rating";
+      tdRating.textContent = epcEntry && epcEntry.rating ? epcEntry.rating : "—";
+
+      tr.append(tdDate, tdPrice, tdAddr, tdType, tdRooms, tdSqm, tdRating);
       tableBody.appendChild(tr);
     }
   }
@@ -865,8 +871,8 @@
 
       tableNote.hidden = false;
       tableNote.textContent =
-        "Rooms = habitable rooms and £/m² = price ÷ internal floor area, both from the property's " +
-        "most recent EPC" +
+        "Rooms = habitable rooms, £/m² = price ÷ internal floor area, and EPC = current energy " +
+        "efficiency band, all from the property's most recent EPC" +
         (matched ? "" : " — no EPC matches found for this search") + ".";
 
       // Re-render so the table cells, tooltip data, and £/m² toggle pick up
@@ -909,10 +915,19 @@
     // Leaflet needs a size recalc when its container was hidden at init time.
     setTimeout(() => map.invalidateSize(), 50);
 
-    const wanted = uniqueProperties();
+    // EPC data carries each property's UPRN, which unlocks exact positions —
+    // wait for that lookup before geocoding.
+    if (epcLoadPromise) {
+      try { await epcLoadPromise; } catch (e) { /* geocode anyway */ }
+    }
+
+    const wanted = uniqueProperties().map((p) => {
+      const e = epcByProperty[p.id];
+      return e && e.uprn ? Object.assign({}, p, { uprn: e.uprn }) : p;
+    });
     const missing = wanted.filter((p) => !(p.id in geocodeCache));
     if (missing.length > 0 && !geocodeFailed) {
-      mapNote.textContent = "Locating properties… (house-level lookups take about a second each)";
+      mapNote.textContent = "Locating properties…";
       try {
         const resp = await fetch("/api/geocode", {
           method: "POST",
@@ -921,6 +936,7 @@
         });
         const body = await resp.json();
         if (!resp.ok) throw new Error(body.error || "Geocoding failed");
+        uprnDbAvailable = body.uprn_db;
         Object.assign(geocodeCache, body.coords || {});
         for (const p of missing) {
           if (!(p.id in geocodeCache)) geocodeCache[p.id] = null; // known-unresolvable
@@ -947,11 +963,13 @@
       properties.get(key).push(s);
     }
 
-    // Address-precision markers sit at their true location; postcode-precision
-    // ones share a centroid, so fan those out to keep them clickable.
+    // Exact markers (UPRN or OSM address) sit at their true location;
+    // postcode-precision ones share a centroid, so fan those out to keep
+    // them clickable.
     const perPostcode = {};
     const latLngs = [];
     let unlocated = 0;
+    let uprnLevel = 0;
     let addressLevel = 0;
 
     for (const [key, salesAtProperty] of properties.entries()) {
@@ -963,7 +981,9 @@
       }
       let lat = coord.lat;
       let lng = coord.lng;
-      if (coord.precision === "address") {
+      if (coord.precision === "uprn") {
+        uprnLevel += 1;
+      } else if (coord.precision === "address") {
         addressLevel += 1;
       } else {
         const n = (perPostcode[first.postcode] = (perPostcode[first.postcode] || 0) + 1) - 1;
@@ -1007,14 +1027,19 @@
 
     if (latLngs.length > 0) {
       map.fitBounds(latLngs, { padding: [30, 30], maxZoom: 17 });
-      const postcodeLevel = latLngs.length - addressLevel;
+      const postcodeLevel = latLngs.length - uprnLevel - addressLevel;
       const parts = [];
+      if (uprnLevel) parts.push(uprnLevel + " at exact position (OS Open UPRN)");
       if (addressLevel) parts.push(addressLevel + " at street-address level (OpenStreetMap)");
       if (postcodeLevel) parts.push(postcodeLevel + " by postcode centroid (accurate to a few doors)");
+      let hint = "";
+      if (uprnDbAvailable === false && postcodeLevel + addressLevel > 0) {
+        hint = " For rooftop-exact positions, run \"Setup Exact Locations.command\" once (builds the free OS Open UPRN lookup).";
+      }
       mapNote.textContent =
         latLngs.length + (latLngs.length === 1 ? " property" : " properties") + " located: " +
         parts.join(", ") +
-        (unlocated ? "; " + unlocated + " could not be located" : "") + ".";
+        (unlocated ? "; " + unlocated + " could not be located" : "") + "." + hint;
     } else {
       mapNote.textContent = geocodeFailed
         ? mapNote.textContent

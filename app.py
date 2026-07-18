@@ -3,6 +3,7 @@ import os
 from flask import Flask, jsonify, render_template, request
 
 import epc
+import uprn_db
 from geocode import GeocodeError, geocode_properties
 from land_registry import LandRegistryError, parse_query, search_sales
 
@@ -51,7 +52,7 @@ def geocode():
     except GeocodeError as exc:
         app.logger.error("Geocoding failed: %s", exc)
         return jsonify({"error": str(exc)}), 502
-    return jsonify({"coords": coords})
+    return jsonify({"coords": coords, "uprn_db": uprn_db.available()})
 
 
 @app.post("/api/epc")

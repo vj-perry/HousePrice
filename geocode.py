@@ -18,6 +18,8 @@ import time
 
 import requests
 
+import uprn_db
+
 POSTCODES_IO_URL = "https://api.postcodes.io/postcodes"
 NOMINATIM_URL = "https://nominatim.openstreetmap.org/search"
 USER_AGENT = "HousePriceExplorer/1.0 (personal local app)"
@@ -114,9 +116,14 @@ def _nominatim_lookup(paon, street, town, postcode):
 
 def geocode_properties(properties: list) -> dict:
     """Map property id -> {'lat', 'lng', 'precision'} where precision is
-    'address' (house-level, OSM) or 'postcode' (centroid fallback)."""
+    'uprn' (rooftop-exact, OS Open UPRN), 'address' (house-level, OSM),
+    or 'postcode' (centroid fallback)."""
     postcodes = [p.get("postcode") for p in properties if p.get("postcode")]
     pc_coords = geocode_postcodes(postcodes)
+
+    # Tier 1: exact positions from the local OS Open UPRN database for
+    # properties whose EPC gave us a UPRN.
+    uprn_coords = uprn_db.lookup([p.get("uprn") for p in properties if p.get("uprn")])
 
     house_level = len(properties) <= HOUSE_LEVEL_LIMIT
     results = {}
@@ -124,6 +131,15 @@ def geocode_properties(properties: list) -> dict:
     for p in properties:
         pid = p.get("id")
         if pid is None:
+            continue
+
+        uprn = str(p.get("uprn") or "").strip()
+        if uprn and uprn in uprn_coords:
+            results[pid] = {
+                "lat": uprn_coords[uprn]["lat"],
+                "lng": uprn_coords[uprn]["lng"],
+                "precision": "uprn",
+            }
             continue
         paon = (p.get("paon") or "").strip()
         street = (p.get("street") or "").strip()

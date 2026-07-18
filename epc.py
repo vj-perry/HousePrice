@@ -184,6 +184,8 @@ def _rows_for_postcode(postcode: str) -> list:
 
 _ADDR_KEYS = {"addressline1", "addressline2", "addressline3", "addressline4",
               "address1", "address2", "address3", "address"}
+_RATING_KEYS = {"currentenergyefficiencyband", "currentenergyrating", "energyrating",
+                "currentenergyefficiencyrating"}
 _CERT_NO_KEYS = {"certificatenumber", "rrn", "lmkkey"}
 _DATE_KEYS = {"registrationdate", "lodgementdate"}
 _ROOMS_KEYS = {"habitableroomcount", "numberhabitablerooms", "habitablerooms",
@@ -264,14 +266,19 @@ def epc_for_properties(properties: list) -> dict:
                 if not cert_no:
                     continue
                 reg_date = str(_find_value(row, _DATE_KEYS) or "")
+                uprn = _find_value(row, {"uprn"})
+                rating = _find_value(row, _RATING_KEYS)
                 if best is None or reg_date > best[0]:
-                    best = (reg_date, cert_no)
+                    best = (reg_date, cert_no, str(uprn) if uprn else None,
+                            str(rating).strip().upper() if rating else None)
             if not best:
                 continue
             if fetches >= MAX_CERT_FETCHES:
                 continue
             fetches += 1
-            entry = _cert_details(best[1])
-            if entry["rooms"] is not None or entry["floor_area"] is not None:
+            entry = dict(_cert_details(best[1]))
+            entry["uprn"] = best[2]
+            entry["rating"] = best[3]
+            if any(entry.get(k) is not None for k in ("rooms", "floor_area", "uprn", "rating")):
                 results[p["id"]] = entry
     return results

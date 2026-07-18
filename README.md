@@ -22,10 +22,13 @@ January 1995) up to the latest published data.
 - Sales above 5x the median price are excluded from the chart (they would
   squash the y-axis) and greyed out in the table.
 - Toggleable map (Leaflet, vendored locally; OpenStreetMap tiles) plotting
-  each property: house-level positions from OSM Nominatim when a search has
-  <= 25 unique properties (its usage policy allows ~1 lookup/second), with
-  postcodes.io postcode centroids (accurate to a few doors) as the fallback;
-  the note under the map states which precision each search got.
+  each property. Three precision tiers, best available per property:
+  (1) rooftop-exact via the property's UPRN from its EPC joined against a
+  local OS Open UPRN database — build it once with
+  `python3 build_uprn_db.py` (~700MB download, ~2GB SQLite, free OGL data);
+  (2) OSM Nominatim house-level lookup for searches with <= 25 unique
+  properties; (3) postcodes.io postcode centroids. The note under the map
+  states the precision mix.
 - 12-month rolling median trend line on the chart (toggleable from the
   legend; shown when there's at least two years of history).
 - Optional EPC-powered extras (register free at
@@ -33,8 +36,9 @@ January 1995) up to the latest published data.
   EPC_AUTH to the bearer token from your My Account page before starting
   the app; a legacy "email:token" value also works):
   a Rooms column (habitable rooms — no open dataset publishes bedroom
-  counts), a £/m² column (price ÷ EPC internal floor area), £/m² in the
-  tooltip, and a Price / £-per-m² chart mode toggle.
+  counts), a £/m² column (price ÷ EPC internal floor area), an EPC energy
+  band column, £/m² in the tooltip, a Price / £-per-m² chart mode toggle,
+  and UPRNs for exact map positions.
 
 Data is fetched live from Land Registry's public SPARQL endpoint — nothing is
 downloaded or stored locally.
