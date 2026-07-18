@@ -8,8 +8,10 @@ One free-text search box that accepts any mix of postcode (full `SW1A 2AA`
 or district `SW1A`), street name, and house number — e.g. `10 Downing
 Street SW1A 2AA`, or just a street name on its own (street-only searches
 match the exact full street name; adding a postcode allows partial names).
-Results always cover the full recorded history (the dataset starts in
-January 1995) up to the latest published data.
+Results cover 2008 (when EPCs began, so every row can carry rooms,
+floor-area, and energy-band data) up to the latest published data —
+override with LAND_REGISTRY_FROM=YYYY-MM-DD to reach back to the
+dataset's 1995 start.
 
 - Scatter chart with a distinct marker shape and colour per property type,
   and the house number labelled beside each point (up to 250 visible points).

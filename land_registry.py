@@ -30,6 +30,11 @@ _OUTCODE_IN_TEXT = re.compile(r"\b([A-Z]{1,2}\d[A-Z\d]?)\b", re.IGNORECASE)
 MAX_RESULTS = 3000
 REQUEST_TIMEOUT = 30
 
+# Earliest sale date returned. EPCs exist from 2008, so cutting there keeps
+# every row enrichable (rooms, £/m², energy band) and drops historic prices
+# with little relevance to today's market. Override with LAND_REGISTRY_FROM.
+DATA_FROM = os.environ.get("LAND_REGISTRY_FROM", "2008-01-01")
+
 
 class LandRegistryError(Exception):
     """Raised for anything that goes wrong talking to the Land Registry API."""
@@ -205,6 +210,7 @@ def search_sales(postcode: str | None, street: str | None = None, paon: str | No
       {_OPTIONAL_FIELDS}
       {postcode_filter}
       {street_filter}
+      FILTER(?date >= "{DATA_FROM}"^^xsd:date)
     }}
     ORDER BY ?date
     LIMIT {MAX_RESULTS}
